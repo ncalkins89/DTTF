@@ -1,0 +1,23 @@
+# Secrets
+.env
+
+# Data (personal picks + API cache — not committed)
+data/picks.json
+data/dttf.db
+data/cache/
+
+# Derived / generated — can be rebuilt by running optimize_decay.py
+data/optimal_decay.json
+data/optimal_ewma.json
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+dist/
+build/
+
+# macOS
+.DS_Store
