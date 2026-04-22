@@ -453,6 +453,7 @@ app = Dash(__name__,
            external_stylesheets=[dbc.themes.BOOTSTRAP],
            suppress_callback_exceptions=True)
 app.title = "DTTF — Drive to the Finals"
+server = app.server  # gunicorn entry point — safe to have locally too
 
 # ── Layout ──────────────────────────────────────────────────────────────────
 
@@ -1842,6 +1843,31 @@ def update_team_commitment(subtab, main_tab):
         font=dict(family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"),
     )
     return fig
+
+
+# ── Background scheduler (auto-refresh DB) ──────────────────────────────────
+# Runs when served via gunicorn. Skipped in Dash debug mode (reloader spawns
+# two processes and we don't want double scheduling).
+import os as _os
+if not _os.environ.get("WERKZEUG_RUN_MAIN") and not _os.environ.get("DTTF_NO_SCHEDULER"):
+    import atexit
+    import subprocess as _sp
+    from apscheduler.schedulers.background import BackgroundScheduler
+
+    def _run_update(skip_logs: bool = True):
+        args = [sys.executable, "scripts/update_db.py"]
+        if skip_logs:
+            args.append("--skip-logs")
+        _sp.run(args, cwd=str(Path(__file__).parent.parent))
+
+    _scheduler = BackgroundScheduler(daemon=True)
+    # Every 30 min: fast refresh (odds, schedule, DraftEdge, series — ~10s)
+    _scheduler.add_job(_run_update, "interval", minutes=30, kwargs={"skip_logs": True})
+    # Daily at 6am: full refresh including game logs (~5 min)
+    _scheduler.add_job(_run_update, "cron", hour=6, minute=0, kwargs={"skip_logs": False})
+    _scheduler.start()
+    atexit.register(lambda: _scheduler.shutdown(wait=False))
+    print("[scheduler] started — 30-min fast refresh + daily 6am full refresh", flush=True)
 
 
 if __name__ == "__main__":
