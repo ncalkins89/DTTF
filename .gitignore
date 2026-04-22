@@ -1,5 +1,6 @@
 # Secrets
 .env
+*.pem
 
 # Data (personal picks + API cache — not committed)
 data/picks.json
