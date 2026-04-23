@@ -11,6 +11,7 @@ import dash_bootstrap_components as dbc
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
+import dash
 from dash import Dash, Input, Output, State, callback_context, dcc, html
 from dotenv import load_dotenv
 
@@ -527,6 +528,7 @@ app.layout = dbc.Container(
         dcc.Store(id="selected-player-id"),
         dcc.Store(id="load-db-trigger"),
         dcc.Store(id="today-data-store"),
+        dcc.Store(id="picks-store"),  # fires after a pick is written to DB
         dcc.Interval(id="startup-check", interval=500, max_intervals=1),
         dcc.Interval(id="date-init", interval=100, max_intervals=1),
 
@@ -1006,14 +1008,16 @@ def update_compare_chart(player_ids, metric):
 
 @app.callback(
     Output("pick-status", "children"),
+    Output("picks-store", "data"),
     Input("record-pick-btn", "n_clicks"),
     State("pick-dropdown", "value"),
     State("today-data-store", "data"),
     prevent_initial_call=True,
 )
 def record_pick_callback(n_clicks, player_ids, store_data):
+    no_trigger = dash.no_update
     if not player_ids:
-        return dbc.Alert("Select at least one player.", color="warning", duration=3000)
+        return dbc.Alert("Select at least one player.", color="warning", duration=3000), no_trigger
     if isinstance(player_ids, int):
         player_ids = [player_ids]
     rows = (store_data or {}).get("rows", [])
@@ -1022,7 +1026,6 @@ def record_pick_callback(n_clicks, player_ids, store_data):
     for pid in player_ids:
         row = next((r for r in rows if r["player_id"] == pid), None)
         if not row:
-            # Player not playing today — use all-playoff roster as fallback
             p = all_playoff.get(pid)
             if not p:
                 errors.append(f"Player {pid} not found in any playoff roster.")
@@ -1051,10 +1054,29 @@ def record_pick_callback(n_clicks, player_ids, store_data):
     msgs = []
     if recorded:
         msgs.append(dbc.Alert(f"✓ Picked: {', '.join(recorded)}", color="success", duration=5000))
+        # Bust the in-memory df cache so today's table reflects the new pick
+        _df_cache.clear()
     if errors:
         msgs.append(dbc.Alert(" | ".join(errors), color="danger", duration=6000))
-    return msgs or dbc.Alert("Nothing recorded.", color="warning", duration=3000)
+    picks_trigger = n_clicks if recorded else no_trigger
+    return msgs or dbc.Alert("Nothing recorded.", color="warning", duration=3000), picks_trigger
 
+
+@app.callback(
+    Output("today-data-store", "data", allow_duplicate=True),
+    Input("picks-store", "data"),
+    State("today-data-store", "data"),
+    prevent_initial_call=True,
+)
+def patch_picked_in_store(_, store_data):
+    """Update Picked flags in the today store without rebuilding the full table."""
+    if not store_data or not store_data.get("rows"):
+        return dash.no_update
+    used_ids = set(get_used_player_ids())
+    rows = store_data["rows"]
+    for row in rows:
+        row["Picked"] = row["player_id"] in used_ids
+    return {**store_data, "rows": rows}
 
 
 @app.callback(
@@ -1591,9 +1613,9 @@ def update_decay_distribution(tab):
     Output("actual-player-dropdown", "options"),
     Input("main-tabs", "active_tab"),
     Input("update-actual-btn", "n_clicks"),
-    Input("record-pick-btn", "n_clicks"),
+    Input("picks-store", "data"),
 )
-def render_history(tab, _update, _record):
+def render_history(tab, _update, _picks):
     if tab != "tab-history":
         return html.Div(), []
 
