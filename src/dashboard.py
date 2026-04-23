@@ -26,6 +26,7 @@ from src.data_fetcher import (
     clear_cache,
     get_active_roster,
     get_player_game_logs,
+    get_player_game_logs_365,
     get_series_standings,
     get_team_defense_ratings,
     get_todays_games,
@@ -204,7 +205,7 @@ def build_todays_player_df(game_date: str | None = None, current_round: int = 1)
 
             for player in roster:
                 pid = player["player_id"]
-                logs = get_player_game_logs(pid, allow_api_fetch=False)
+                logs = get_player_game_logs_365(pid)
                 proj = project_player(
                     player_id=pid,
                     opponent_team_id=opp_team_id,
@@ -1325,14 +1326,10 @@ def update_model_charts(player_id, decay_rate, tab):
         if player_team_id:
             break
 
-    # Full history for chart display; last 30 for EWMA model
-    from src.data_fetcher import CURRENT_SEASON
-    all_logs_df, _ = db_get_game_logs(player_id, CURRENT_SEASON)
-    logs = get_player_game_logs(player_id)  # last 30, for model
-    if logs.empty and all_logs_df.empty:
+    all_logs_df = get_player_game_logs_365(player_id)
+    logs = all_logs_df
+    if all_logs_df.empty:
         return empty, empty, empty, html.P("No game log data found.", className="text-muted"), empty
-    if logs.empty:
-        logs = all_logs_df
 
     series_record = {"wins": 0, "losses": 0}
     per_game_win_prob = 0.5

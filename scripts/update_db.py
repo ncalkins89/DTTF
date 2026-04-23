@@ -208,6 +208,36 @@ def update_game_logs(games: list[dict], season: str) -> None:
     print(f"  Done — {fetched} fetched, {skipped} skipped (fresh), {total} total.")
 
 
+def update_prior_season_logs(prior_season: str) -> None:
+    """Fetch prior season game logs once (30-day TTL — season is over, data never changes)."""
+    _step(9, f"Prior season logs ({prior_season}) — skips players fresh < 30d")
+    from src.db import get_game_logs
+    from src.data_fetcher import CURRENT_SEASON, get_active_roster, get_player_game_logs
+
+    playoff_ids = _get_playoff_team_ids(CURRENT_SEASON)
+    if not playoff_ids:
+        print("  No playoff teams found — skipping.")
+        return
+
+    seen: set[int] = set()
+    fetched = skipped = 0
+    for team_id in playoff_ids:
+        for player in get_active_roster(team_id):
+            pid = player["player_id"]
+            if pid in seen:
+                continue
+            seen.add(pid)
+            _, is_fresh = get_game_logs(pid, prior_season, ttl_seconds=30 * 86400)
+            if is_fresh:
+                skipped += 1
+                continue
+            logs = get_player_game_logs(pid, prior_season, allow_api_fetch=True, ttl_seconds=30 * 86400)
+            fetched += 1
+            print(f"  [{fetched}] {player['player_name']}: {len(logs)} prior-season games", flush=True)
+
+    print(f"  Done — {fetched} fetched, {skipped} skipped (fresh), {len(seen)} total.")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Bring dttf.db up to date.")
     parser.add_argument("--date", default=date.today().isoformat(),
@@ -216,7 +246,7 @@ def main() -> None:
                         help="Skip per-player game log fetch (faster, ~10s vs ~5min)")
     args = parser.parse_args()
 
-    from src.data_fetcher import CURRENT_SEASON
+    from src.data_fetcher import CURRENT_SEASON, PRIOR_SEASON
 
     print(f"=== DTTF update_db — {args.date} ===")
     init_db()
@@ -231,10 +261,13 @@ def main() -> None:
 
     if args.skip_logs:
         print("\n[8] Game logs — skipped (--skip-logs)")
+        print("\n[9] Prior season logs — skipped (--skip-logs)")
     elif not games:
         print("\n[8] Game logs — skipped (no games for this date)")
+        update_prior_season_logs(PRIOR_SEASON)
     else:
         update_game_logs(games, CURRENT_SEASON)
+        update_prior_season_logs(PRIOR_SEASON)
 
     print("\n✓ Done. Open the dashboard: python3 src/dashboard.py")
 

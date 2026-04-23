@@ -16,6 +16,7 @@ CACHE_DIR = Path(__file__).parent.parent / "data" / "cache"
 CACHE = diskcache.Cache(str(CACHE_DIR))
 
 CURRENT_SEASON = "2025-26"
+PRIOR_SEASON = "2024-25"
 REQUEST_DELAY = 0.5  # seconds between uncached nba_api calls
 
 
@@ -82,14 +83,14 @@ def get_active_roster(team_id: int, season: str = CURRENT_SEASON) -> list[dict]:
 def get_player_game_logs(
     player_id: int,
     season: str = CURRENT_SEASON,
-    last_n: int = 30,
     allow_api_fetch: bool = True,
+    ttl_seconds: int = 21600,
 ) -> pd.DataFrame:
     from src.db import get_game_logs, upsert_game_logs
-    df, is_fresh = get_game_logs(player_id, season)
+    df, is_fresh = get_game_logs(player_id, season, ttl_seconds)
     # Return existing data if fresh, OR if we can't fetch anyway (stale > empty).
     if not df.empty and (is_fresh or not allow_api_fetch):
-        return df.head(last_n)
+        return df
     if not allow_api_fetch:
         return pd.DataFrame()
     try:
@@ -129,12 +130,26 @@ def get_player_game_logs(
         combined = combined[combined["MIN"] >= 5]
         combined = combined.reset_index(drop=True)
 
-        # Store the full season — the model applies last_n at read time.
         upsert_game_logs(player_id, season, combined)
-        return combined.head(last_n)
+        return combined
     except Exception as e:
         print(f"[data_fetcher] game logs fetch failed for {player_id}: {e}")
-        return df.head(last_n) if not df.empty else pd.DataFrame()
+        return df if not df.empty else pd.DataFrame()
+
+
+def get_player_game_logs_365(player_id: int) -> pd.DataFrame:
+    """All game logs from the past 365 calendar days (current + prior season, DB only)."""
+    import pandas as pd
+    from datetime import date, timedelta
+    from src.db import get_game_logs
+    cutoff = pd.Timestamp(date.today() - timedelta(days=365))
+    cur, _ = get_game_logs(player_id, CURRENT_SEASON)
+    prior, _ = get_game_logs(player_id, PRIOR_SEASON, ttl_seconds=30 * 86400)
+    parts = [df for df in [cur, prior] if not df.empty]
+    if not parts:
+        return pd.DataFrame()
+    combined = pd.concat(parts).sort_values("GAME_DATE", ascending=False).reset_index(drop=True)
+    return combined[combined["GAME_DATE"] >= cutoff].reset_index(drop=True)
 
 
 def get_player_game_logs_season(
