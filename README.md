@@ -21,11 +21,11 @@ ODDS_API_KEY=your_key_here
 Push your changes to GitHub, then SSH in and pull:
 
 ```bash
-ssh -i ~/.ssh/dttf-key.pem ubuntu@<SERVER_IP>
+ssh -i ssh-key-2026-04-22.key ubuntu@147.224.51.47
 cd DTTF && git pull && sudo systemctl restart dttf
 ```
 
-App is live at `http://<SERVER_IP>`.
+App is live at `http://147.224.51.47`.
 
 ## Server setup (one-time)
 
