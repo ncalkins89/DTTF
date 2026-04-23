@@ -25,7 +25,7 @@ ssh -i ssh-key-2026-04-22.key ubuntu@147.224.51.47
 cd DTTF && git pull && sudo systemctl restart dttf
 ```
 
-App is live at `http://147.224.51.47`.
+App is live at http://147.224.51.47
 
 ## Server setup (one-time)
 
