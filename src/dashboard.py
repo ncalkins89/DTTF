@@ -359,6 +359,7 @@ def _today_layout():
             dcc.Loading(
                 html.Div(id="today-table-container"),
                 type="circle", color="#0071e3", id="table-loading",
+                target_components={"today-data-store": "data"},
             ),
             dbc.Card(dbc.CardBody([
                 dbc.Row([
@@ -1220,7 +1221,7 @@ def _model_layout():
                 dbc.InputGroup([
                     dbc.InputGroupText("Decay rate"),
                     dbc.Input(id="decay-rate-input", type="number", value=0.82,
-                              min=0.70, max=1.00, step=0.02),
+                              min=0.70, max=1.00, step=0.02, debounce=True),
                 ], className="mt-2", style={"maxWidth": "220px"}),
             ], width=4),
             dbc.Col([
@@ -1844,32 +1845,8 @@ def update_team_commitment(subtab, main_tab):
     return fig
 
 
-# ── Background scheduler (auto-refresh DB) ──────────────────────────────────
-# Runs when served via gunicorn. Skipped in Dash debug mode (reloader spawns
-# two processes and we don't want double scheduling).
-import os as _os
-if not _os.environ.get("WERKZEUG_RUN_MAIN") and not _os.environ.get("DTTF_NO_SCHEDULER"):
-    import atexit
-    import subprocess as _sp
-    from apscheduler.schedulers.background import BackgroundScheduler
-
-    def _run_update(skip_logs: bool = True):
-        args = [sys.executable, "scripts/update_db.py"]
-        if skip_logs:
-            args.append("--skip-logs")
-        _sp.run(args, cwd=str(Path(__file__).parent.parent))
-
-    _scheduler = BackgroundScheduler(daemon=True)
-    # Every 30 min: fast refresh (odds, schedule, DraftEdge, series — ~10s)
-    # start_date delays first run by 2 min so the app finishes booting first
-    from datetime import datetime as _dt, timedelta as _td
-    _first_run = _dt.now() + _td(minutes=2)
-    _scheduler.add_job(_run_update, "interval", minutes=30, next_run_time=_first_run, kwargs={"skip_logs": True})
-    # Daily at 6am: full refresh including game logs (~5 min)
-    _scheduler.add_job(_run_update, "cron", hour=6, minute=0, kwargs={"skip_logs": False})
-    _scheduler.start()
-    atexit.register(lambda: _scheduler.shutdown(wait=False))
-    print("[scheduler] started — 30-min fast refresh + daily 6am full refresh", flush=True)
+# DB refresh is handled by a server-side cron job (see README).
+# APScheduler was removed because it doesn't work correctly with multiple gunicorn workers.
 
 
 if __name__ == "__main__":
