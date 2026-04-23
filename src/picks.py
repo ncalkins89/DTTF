@@ -69,5 +69,17 @@ def update_actual_pra(player_id: int, pick_date: str, actual_pra: float) -> None
     raise ValueError(f"No pick found for player_id={player_id} on {pick_date}")
 
 
+def remove_pick(player_id: int) -> str:
+    """Remove a pick by player_id. Returns the player name that was removed."""
+    data = load_picks()
+    match = next((p for p in data["picks"] if p["player_id"] == player_id), None)
+    if not match:
+        raise ValueError(f"No pick found for player_id={player_id}")
+    data["picks"] = [p for p in data["picks"] if p["player_id"] != player_id]
+    data["used_player_ids"] = [i for i in data["used_player_ids"] if i != player_id]
+    save_picks(data)
+    return match["player_name"]
+
+
 def get_pick_history() -> list[dict]:
     return sorted(load_picks()["picks"], key=lambda p: p["pick_date"], reverse=True)

@@ -52,6 +52,7 @@ from src.db import (
 )
 from src.picks import (
     get_pick_history,
+    remove_pick,
     get_used_player_ids,
     record_pick,
     update_actual_pra,
@@ -469,6 +470,14 @@ def _history_layout():
                                color="primary", size="sm"),
                 ]),
                 html.Div(id="pick-status", className="mt-2"),
+                html.Hr(className="my-2"),
+                dbc.InputGroup([
+                    dcc.Dropdown(id="remove-pick-dropdown", placeholder="Select pick to remove...",
+                                 style={"minWidth": "400px", "fontSize": "13px"}),
+                    dbc.Button("Remove Pick", id="remove-pick-btn",
+                               color="danger", size="sm", outline=True),
+                ]),
+                html.Div(id="remove-pick-status", className="mt-2"),
             ]), className="mb-3"),
             dcc.Loading(html.Div(id="history-table-container"), type="circle", color="#0071e3"),
             html.Hr(),
@@ -1063,6 +1072,24 @@ def record_pick_callback(n_clicks, player_ids, store_data):
 
 
 @app.callback(
+    Output("remove-pick-status", "children"),
+    Output("picks-store", "data", allow_duplicate=True),
+    Input("remove-pick-btn", "n_clicks"),
+    State("remove-pick-dropdown", "value"),
+    prevent_initial_call=True,
+)
+def remove_pick_callback(n_clicks, player_id):
+    if not player_id:
+        return dbc.Alert("Select a pick to remove.", color="warning", duration=3000), dash.no_update
+    try:
+        name = remove_pick(int(player_id))
+        _df_cache.clear()
+        return dbc.Alert(f"Removed: {name}", color="success", duration=4000), n_clicks
+    except ValueError as e:
+        return dbc.Alert(str(e), color="danger", duration=5000), dash.no_update
+
+
+@app.callback(
     Output("today-data-store", "data", allow_duplicate=True),
     Input("picks-store", "data"),
     State("today-data-store", "data"),
@@ -1611,17 +1638,18 @@ def update_decay_distribution(tab):
 @app.callback(
     Output("history-table-container", "children"),
     Output("actual-player-dropdown", "options"),
+    Output("remove-pick-dropdown", "options"),
     Input("main-tabs", "active_tab"),
     Input("update-actual-btn", "n_clicks"),
     Input("picks-store", "data"),
 )
 def render_history(tab, _update, _picks):
     if tab != "tab-history":
-        return html.Div(), []
+        return html.Div(), [], []
 
     history = get_pick_history()
     if not history:
-        return html.P("No picks recorded yet.", className="text-muted"), []
+        return html.P("No picks recorded yet.", className="text-muted"), [], []
 
     rows = []
     for p in history:
@@ -1672,8 +1700,12 @@ def render_history(tab, _update, _picks):
          "value": f"{p['player_id']}|{p['pick_date']}"}
         for p in pending
     ]
+    remove_opts = [
+        {"label": f"{p['player_name']} ({p['pick_date']})", "value": p["player_id"]}
+        for p in history
+    ]
 
-    return table, update_opts
+    return table, update_opts, remove_opts
 
 
 @app.callback(
