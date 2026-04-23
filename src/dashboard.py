@@ -361,7 +361,6 @@ def _today_layout():
             dcc.Loading(
                 html.Div(id="today-table-container"),
                 type="circle", color="#0071e3", id="table-loading",
-                target_components={"today-data-store": "data"},
                 delay_show=0, style={"minHeight": "500px"},
             ),
             dbc.Card(dbc.CardBody([
@@ -563,7 +562,7 @@ app.layout = dbc.Container(
                 dcc.Loading(
                     html.Div(style={"width": "28px", "height": "28px"}),
                     id="header-data-loading",
-                    target_components={"today-data-store": "data"},
+                    target_components={"today-table-container": "children"},
                     type="circle", color="#0071e3",
                     delay_show=0,
                     style={"display": "inline-block", "verticalAlign": "middle",
@@ -776,85 +775,41 @@ def toggle_subtabs(subtab):
 # ═══════════════════════════════════════════════════════════════════════════
 
 
-@app.callback(
-    Output("today-data-store", "data"),
-    Input("main-tabs", "active_tab"),
-    Input("clear-cache-btn", "n_clicks"),
-    Input("game-date-picker", "date"),
-    Input("load-db-trigger", "data"),
-    prevent_initial_call=False,
-)
-def load_today_data(tab, _, game_date, _load_trigger):
-    if tab != "tab-today" and tab is not None:
-        return None
-    try:
-        df = build_todays_player_df(game_date=game_date)
-    except Exception as e:
-        print(f"[dashboard] build_todays_player_df error: {e}", flush=True)
-        import traceback; traceback.print_exc()
-        return {"rows": [], "error": str(e)}
-    if df.empty:
-        print("[dashboard] df is empty", flush=True)
-        return {"rows": [], "game_date": game_date, "no_games": True}
-    print(f"[dashboard] built {len(df)} rows", flush=True)
-    # Store everything except the _proj dict (not JSON-serializable easily)
-    display_cols = ["player_id", "Player", "Inj Note", "Signals", "Pos", "Team", "Opp", "Status",
-                    "Pred", "Our Proj", "DE Proj", "DE Pts", "DE Reb", "DE Ast",
-                    "FD Proj", "FD Pts", "FD Reb", "FD Ast", "FD Min",
-                    "RS Avg", "PO Avg", "Ext Proj", "Series Win%",
-                    "Urgency", "Urgency_Ours", "Urgency_DE", "Urgency_FD",
-                    "Exp Games", "Picked", "game_id", "series_win_prob_raw", "series_lose_prob_raw",
-                    "team_wins", "team_losses", "is_home"]
-    available = [c for c in display_cols if c in df.columns]
-    return {"rows": df[available].to_dict("records")}
+_DISPLAY_COLS = [
+    "player_id", "Player", "Inj Note", "Signals", "Pos", "Team", "Opp", "Status",
+    "Pred", "Our Proj", "DE Proj", "DE Pts", "DE Reb", "DE Ast",
+    "FD Proj", "FD Pts", "FD Reb", "FD Ast", "FD Min",
+    "RS Avg", "PO Avg", "Ext Proj", "Series Win%",
+    "Urgency", "Urgency_Ours", "Urgency_DE", "Urgency_FD",
+    "Exp Games", "Picked", "game_id", "series_win_prob_raw", "series_lose_prob_raw",
+    "team_wins", "team_losses", "is_home",
+]
 
 
-@app.callback(
-    Output("pick-dropdown", "options"),
-    Input("main-tabs", "active_tab"),
-    Input("today-data-store", "data"),
-)
-def populate_pick_dropdown(tab, _store):
-    all_playoff = _get_all_playoff_players()
-    used_ids = get_used_player_ids()
-    return [
-        {"label": f"{p['player_name']} ({p['team_abbr']})", "value": p["player_id"]}
-        for p in all_playoff if p["player_id"] not in used_ids
-    ]
-
-
-@app.callback(
-    Output("today-table-container", "children"),
-    Input("today-data-store", "data"),
-    Input("urgency-model-select", "value"),
-)
-def render_today_table(store_data, urgency_field):
+def _render_table_from_store(store_data, urgency_field):
+    """Build the AG Grid from serialized store data. Fast — no DB calls."""
     if store_data is None:
-        return html.P("Loading...", className="text-muted mt-3"), []
+        return html.P("Loading...", className="text-muted mt-3")
     if store_data.get("no_games"):
         gd = store_data.get("game_date") or "this date"
-        return html.P(f"No games scheduled for {gd}.", className="text-muted mt-3"), []
+        return html.P(f"No games scheduled for {gd}.", className="text-muted mt-3")
     if not store_data.get("rows"):
-        return html.P("No player data — run update_db to load today's data.", className="text-muted mt-3"), []
+        return html.P("No player data — run update_db to load today's data.", className="text-muted mt-3")
 
-    rows = store_data["rows"]
-    df = pd.DataFrame(rows)
-    display_df = df
+    df = pd.DataFrame(store_data["rows"])
     urgency_col = urgency_field or "Urgency"
-    if urgency_col in display_df.columns:
-        display_df = display_df.assign(Urgency_Display=display_df[urgency_col])
-    elif "Urgency" in display_df.columns:
-        display_df = display_df.assign(Urgency_Display=display_df["Urgency"])
+    if urgency_col in df.columns:
+        df = df.assign(Urgency_Display=df[urgency_col])
+    elif "Urgency" in df.columns:
+        df = df.assign(Urgency_Display=df["Urgency"])
 
-    # Merge picked + injury into a single display column
     def _display_status(row):
         if row.get("Picked"):
             return "✓ Picked"
         return row.get("Status") or ""
-    display_df = display_df.assign(Display_Status=display_df.apply(_display_status, axis=1))
+    df = df.assign(Display_Status=df.apply(_display_status, axis=1))
 
     col_defs = [
-        # Player identity (pinned)
         {"field": "Player", "pinned": "left",
          "tooltipField": "Signals",
          "cellStyle": {"function": "(params.data.Display_Status&&(params.data.Display_Status[0]==='✓'||params.data.Display_Status[0]==='❌')) ? {'fontWeight':'600','color':'#aaa','fontStyle':'italic','textDecoration':'line-through'} : {'fontWeight':'600'}"},
@@ -864,13 +819,9 @@ def render_today_table(store_data, urgency_field):
         {"field": "Pos"},
         {"field": "Team"},
         {"field": "Opp"},
-
-        # Urgency column
         {"field": "Urgency_Display", "headerName": "Urgency", "width": 85,
          "sort": "desc",
          "cellStyle": {"function": "(params.data.Display_Status&&(params.data.Display_Status[0]==='✓'||params.data.Display_Status[0]==='❌')) ? {'fontWeight':'700','color':'#aaa','fontStyle':'italic','textDecoration':'line-through'} : {'fontWeight':'700','color': params.value > 25 ? '#16a34a' : params.value > 12 ? '#ca8a04' : '#dc2626'}"}},
-
-        # Score projection group
         {"headerName": "Score Projection", "children": [
             {"field": "Pred", "headerName": "Pred"},
             {"field": "Our Proj", "headerName": "Ours"},
@@ -879,23 +830,17 @@ def render_today_table(store_data, urgency_field):
             {"field": "RS Avg",   "headerName": "RS Avg"},
             {"field": "PO Avg",   "headerName": "PO Avg"},
         ]},
-
-        # DE breakdown group
         {"headerName": "DE Split", "children": [
             {"field": "DE Pts", "headerName": "Pts", "width": 58},
             {"field": "DE Reb", "headerName": "Reb", "width": 58},
             {"field": "DE Ast", "headerName": "Ast", "width": 58},
         ]},
-
-        # FD breakdown group
         {"headerName": "FD Split", "children": [
             {"field": "FD Pts", "headerName": "Pts", "width": 58},
             {"field": "FD Reb", "headerName": "Reb", "width": 58},
             {"field": "FD Ast", "headerName": "Ast", "width": 58},
             {"field": "FD Min", "headerName": "Min", "width": 58},
         ]},
-
-        # Series group
         {"headerName": "Series", "children": [
             {"field": "Series Win%", "headerName": "Win%", "width": 68,
              "valueFormatter": {"function": "params.value != null ? (params.value*100).toFixed(0)+'%' : ''"}},
@@ -903,9 +848,9 @@ def render_today_table(store_data, urgency_field):
         ]},
     ]
 
-    table = dag.AgGrid(
+    return dag.AgGrid(
         id="today-ag-grid",
-        rowData=display_df.to_dict("records"),
+        rowData=df.to_dict("records"),
         columnDefs=col_defs,
         defaultColDef={
             "sortable": True, "filter": True, "resizable": True,
@@ -930,8 +875,59 @@ def render_today_table(store_data, urgency_field):
         className="ag-theme-alpine",
     )
 
-    return table
 
+@app.callback(
+    Output("today-table-container", "children"),
+    Output("today-data-store", "data"),
+    Input("main-tabs", "active_tab"),
+    Input("clear-cache-btn", "n_clicks"),
+    Input("game-date-picker", "date"),
+    Input("load-db-trigger", "data"),
+    State("urgency-model-select", "value"),
+    prevent_initial_call=False,
+)
+def load_and_render_today(tab, _, game_date, _load_trigger, urgency_field):
+    if tab != "tab-today" and tab is not None:
+        return dash.no_update, None
+    try:
+        df = build_todays_player_df(game_date=game_date)
+    except Exception as e:
+        print(f"[dashboard] build_todays_player_df error: {e}", flush=True)
+        import traceback; traceback.print_exc()
+        store = {"rows": [], "error": str(e)}
+        return html.P(f"Error loading data: {e}", className="text-danger mt-3"), store
+    if df.empty:
+        print("[dashboard] df is empty", flush=True)
+        store = {"rows": [], "game_date": game_date, "no_games": True}
+        return _render_table_from_store(store, urgency_field), store
+    print(f"[dashboard] built {len(df)} rows", flush=True)
+    available = [c for c in _DISPLAY_COLS if c in df.columns]
+    store = {"rows": df[available].to_dict("records")}
+    return _render_table_from_store(store, urgency_field), store
+
+
+@app.callback(
+    Output("pick-dropdown", "options"),
+    Input("main-tabs", "active_tab"),
+    Input("today-data-store", "data"),
+)
+def populate_pick_dropdown(tab, _store):
+    all_playoff = _get_all_playoff_players()
+    used_ids = get_used_player_ids()
+    return [
+        {"label": f"{p['player_name']} ({p['team_abbr']})", "value": p["player_id"]}
+        for p in all_playoff if p["player_id"] not in used_ids
+    ]
+
+
+@app.callback(
+    Output("today-table-container", "children", allow_duplicate=True),
+    Input("urgency-model-select", "value"),
+    State("today-data-store", "data"),
+    prevent_initial_call=True,
+)
+def rerender_for_urgency(urgency_field, store_data):
+    return _render_table_from_store(store_data, urgency_field)
 
 
 @app.callback(
@@ -1104,19 +1100,22 @@ def remove_pick_callback(n_clicks, player_id):
 
 @app.callback(
     Output("today-data-store", "data", allow_duplicate=True),
+    Output("today-table-container", "children", allow_duplicate=True),
     Input("picks-store", "data"),
     State("today-data-store", "data"),
+    State("urgency-model-select", "value"),
     prevent_initial_call=True,
 )
-def patch_picked_in_store(_, store_data):
-    """Update Picked flags in the today store without rebuilding the full table."""
+def patch_and_rerender_picks(_, store_data, urgency_field):
+    """Update Picked flags and re-render table immediately after a pick change."""
     if not store_data or not store_data.get("rows"):
-        return dash.no_update
+        return dash.no_update, dash.no_update
     used_ids = set(get_used_player_ids())
     rows = store_data["rows"]
     for row in rows:
         row["Picked"] = row["player_id"] in used_ids
-    return {**store_data, "rows": rows}
+    updated = {**store_data, "rows": rows}
+    return updated, _render_table_from_store(updated, urgency_field)
 
 
 @app.callback(
