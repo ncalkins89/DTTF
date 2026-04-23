@@ -691,16 +691,15 @@ def check_db_status(_, store_data):
     prevent_initial_call=True,
 )
 def run_load_db(_, selected_date):
-    import subprocess
+    import subprocess, threading
     load_date = selected_date or date.today().isoformat()
-    result = subprocess.run(
-        [sys.executable, "scripts/update_db.py", "--date", load_date],
-        capture_output=True, text=True,
-        cwd=str(Path(__file__).parent.parent),
-    )
-    if result.returncode == 0:
-        return "✓ Loaded", "success", load_date
-    return f"Error: {result.stderr[-200:]}", "danger", None
+    def _run():
+        subprocess.run(
+            [sys.executable, "scripts/update_db.py", "--date", load_date],
+            cwd=str(Path(__file__).parent.parent),
+        )
+    threading.Thread(target=_run, daemon=True).start()
+    return "Loading in background…", "info", load_date
 
 
 # ── Tab routing ─────────────────────────────────────────────────────────────
