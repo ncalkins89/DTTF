@@ -331,6 +331,7 @@ def _today_layout():
         dcc.Loading(
             html.Div(id="schedule-strip", className="mb-2"),
             type="circle", color="#0071e3", id="schedule-loading",
+            delay_show=0, style={"minHeight": "60px"},
         ),
 
         # ── Sub-tabs ────────────────────────────────────────────────────
@@ -361,6 +362,7 @@ def _today_layout():
                 html.Div(id="today-table-container"),
                 type="circle", color="#0071e3", id="table-loading",
                 target_components={"today-data-store": "data"},
+                delay_show=0, style={"minHeight": "500px"},
             ),
             dbc.Card(dbc.CardBody([
                 dbc.Row([
@@ -373,7 +375,7 @@ def _today_layout():
                 ]),
                 dcc.Loading(
                     dcc.Graph(id="scatter-chart", config={"displayModeBar": True}),
-                    type="circle", color="#0071e3",
+                    type="circle", color="#0071e3", delay_show=0,
                 ),
             ]), className="mt-3"),
         ]),
@@ -405,7 +407,7 @@ def _today_layout():
                 dcc.Loading(
                     dcc.Graph(id="compare-chart", config={"displayModeBar": False},
                               style={"height": "420px"}),
-                    type="circle", color="#0071e3",
+                    type="circle", color="#0071e3", delay_show=0,
                 ),
             ])),
         ]),
@@ -479,7 +481,8 @@ def _history_layout():
                 ]),
                 html.Div(id="remove-pick-status", className="mt-2"),
             ]), className="mb-3"),
-            dcc.Loading(html.Div(id="history-table-container"), type="circle", color="#0071e3"),
+            dcc.Loading(html.Div(id="history-table-container"), type="circle", color="#0071e3",
+                        delay_show=0, style={"minHeight": "200px"}),
             html.Hr(),
             html.Details([
                 html.Summary("Update actual PRA for a past pick",
@@ -504,7 +507,7 @@ def _history_layout():
                 dcc.Loading(
                     dcc.Graph(id="team-commitment-chart", config={"displayModeBar": False},
                               style={"height": "380px"}),
-                    type="circle", color="#0071e3",
+                    type="circle", color="#0071e3", delay_show=0,
                 ),
             ])),
         ]),
@@ -556,6 +559,16 @@ app.layout = dbc.Container(
                 ),
                 html.Span(id="last-updated-text",
                           style={"fontSize": "12px", "color": "#6e6e73", "marginLeft": "10px"}),
+                # Spinner that fires while today-data-store is loading (date change etc.)
+                dcc.Loading(
+                    html.Div(style={"width": "28px", "height": "28px"}),
+                    id="header-data-loading",
+                    target_components={"today-data-store": "data"},
+                    type="circle", color="#0071e3",
+                    delay_show=0,
+                    style={"display": "inline-block", "verticalAlign": "middle",
+                           "marginLeft": "10px", "width": "28px", "height": "28px"},
+                ),
             ], width="auto", className="d-flex align-items-center"),
             dbc.Col([
                 dbc.Button("Clear Cache", id="clear-cache-btn", color="light", size="sm", className="me-1"),
@@ -1278,7 +1291,7 @@ def _model_layout():
             ], width=8),
         ], className="mb-3"),
 
-        dcc.Loading(type="circle", color="#0071e3",
+        dcc.Loading(type="circle", color="#0071e3", delay_show=0,
                     target_components={"pra-history-chart": "figure", "decay-weights-chart": "figure",
                                        "adjustment-waterfall": "figure", "model-summary-card": "children"},
                     children=html.Div([
