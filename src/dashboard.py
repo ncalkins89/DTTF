@@ -366,7 +366,10 @@ def _today_layout():
                                className="text-muted mb-2", style={"fontSize": "12px"}),
                     ]),
                 ]),
-                dcc.Graph(id="scatter-chart", config={"displayModeBar": True}),
+                dcc.Loading(
+                    dcc.Graph(id="scatter-chart", config={"displayModeBar": True}),
+                    type="circle", color="#0071e3",
+                ),
             ]), className="mt-3"),
         ]),
 
@@ -394,8 +397,11 @@ def _today_layout():
                         width=2,
                     ),
                 ], className="mb-3"),
-                dcc.Graph(id="compare-chart", config={"displayModeBar": False},
-                          style={"height": "420px"}),
+                dcc.Loading(
+                    dcc.Graph(id="compare-chart", config={"displayModeBar": False},
+                              style={"height": "420px"}),
+                    type="circle", color="#0071e3",
+                ),
             ])),
         ]),
 
@@ -460,7 +466,7 @@ def _history_layout():
                 ]),
                 html.Div(id="pick-status", className="mt-2"),
             ]), className="mb-3"),
-            html.Div(id="history-table-container"),
+            dcc.Loading(html.Div(id="history-table-container"), type="circle", color="#0071e3"),
             html.Hr(),
             html.Details([
                 html.Summary("Update actual PRA for a past pick",
@@ -482,8 +488,11 @@ def _history_layout():
             dbc.Card(dbc.CardBody([
                 html.P("How many picks you've used from each team, and remaining eligible players.",
                        className="text-muted mb-3", style={"fontSize": "12px"}),
-                dcc.Graph(id="team-commitment-chart", config={"displayModeBar": False},
-                          style={"height": "380px"}),
+                dcc.Loading(
+                    dcc.Graph(id="team-commitment-chart", config={"displayModeBar": False},
+                              style={"height": "380px"}),
+                    type="circle", color="#0071e3",
+                ),
             ])),
         ]),
     ])
