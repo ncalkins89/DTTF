@@ -235,12 +235,8 @@ def build_todays_player_df(game_date: str | None = None, current_round: int = 1)
                 likely_out = has_recent_games and de is None and de_loaded
 
                 our_pra = proj["projected_pra"]
-                ext_pras = [p for p in [de_pra, fd_pra] if p is not None]
-                if ext_pras:
-                    ext_avg = sum(ext_pras) / len(ext_pras)
-                    pred_pra = round(0.7 * ext_avg + 0.3 * our_pra, 1)
-                else:
-                    pred_pra = round(our_pra, 1)
+                all_sources = [p for p in [our_pra, de_pra, fd_pra, playoff_avg] if p is not None]
+                pred_pra = round(sum(all_sources) / len(all_sources), 1)
 
                 lose_prob = 1.0 - series_win_prob
                 pred_urgency = round(pred_pra * lose_prob, 2)
@@ -376,23 +372,6 @@ def _today_layout():
 
         # ── Compare Players subtab ───────────────────────────────────────
         html.Div(id="subtab-compare-pane", className="mt-3", style={"display": "none"}, children=[
-            dbc.Card(dbc.CardBody([
-                dbc.Row([
-                    dbc.Col([
-                        html.P("Player Research", className="fw-semibold mb-0",
-                               style={"fontSize": "13px"}),
-                        html.P("Select 2–4 players in the table above, then click Analyze.",
-                               className="text-muted mb-0", style={"fontSize": "12px"}),
-                    ]),
-                    dbc.Col([
-                        dbc.Button("Analyze Selected", id="research-btn",
-                                   color="primary", size="sm", className="me-2"),
-                        dbc.Button("Clear", id="research-clear-btn",
-                                   color="light", size="sm"),
-                    ], width="auto", className="d-flex align-items-center"),
-                ], className="align-items-center mb-2"),
-                dbc.Spinner(html.Div(id="research-results"), size="sm", color="primary"),
-            ]), className="mb-3"),
             dbc.Card(dbc.CardBody([
                 dbc.Row([
                     dbc.Col(
@@ -831,13 +810,21 @@ def render_today_table(store_data, urgency_field):
     elif "Urgency" in display_df.columns:
         display_df = display_df.assign(Urgency_Display=display_df["Urgency"])
 
+    # Merge picked + injury into a single display column
+    def _display_status(row):
+        if row.get("Picked"):
+            return "✓ Picked"
+        return row.get("Status") or ""
+    display_df = display_df.assign(Display_Status=display_df.apply(_display_status, axis=1))
+
     col_defs = [
         # Player identity (pinned)
         {"field": "Player", "pinned": "left",
          "tooltipField": "Signals",
-         "cellStyle": {"function": "(params.data.Picked||(params.data.Status&&params.data.Status.startsWith('❌'))) ? {'fontWeight':'600','color':'#aaa','fontStyle':'italic','textDecoration':'line-through'} : {'fontWeight':'600'}"},
+         "cellStyle": {"function": "(params.data.Display_Status&&(params.data.Display_Status[0]==='✓'||params.data.Display_Status[0]==='❌')) ? {'fontWeight':'600','color':'#aaa','fontStyle':'italic','textDecoration':'line-through'} : {'fontWeight':'600'}"},
          "valueGetter": {"function": "params.data['Signals'] ? params.data['Player'] + ' ℹ' : params.data['Player']"}},
-        {"field": "Status", "cellStyle": {"function": "({'color': params.value && params.value.startsWith('❌') ? '#dc2626' : '#e67e22', 'fontSize':'12px', 'fontWeight':'600'})"}},
+        {"field": "Display_Status", "headerName": "Status",
+         "cellStyle": {"function": "({'color': params.value&&params.value[0]==='✓' ? '#6e6e73' : params.value&&params.value[0]==='❌' ? '#dc2626' : '#e67e22', 'fontSize':'12px', 'fontWeight':'600'})"}},
         {"field": "Pos"},
         {"field": "Team"},
         {"field": "Opp"},
@@ -845,7 +832,7 @@ def render_today_table(store_data, urgency_field):
         # Urgency column
         {"field": "Urgency_Display", "headerName": "Urgency", "width": 85,
          "sort": "desc",
-         "cellStyle": {"function": "(params.data.Picked||(params.data.Status&&params.data.Status.startsWith('❌'))) ? {'fontWeight':'700','color':'#aaa','fontStyle':'italic','textDecoration':'line-through'} : {'fontWeight':'700','color': params.value > 25 ? '#16a34a' : params.value > 12 ? '#ca8a04' : '#dc2626'}"}},
+         "cellStyle": {"function": "(params.data.Display_Status&&(params.data.Display_Status[0]==='✓'||params.data.Display_Status[0]==='❌')) ? {'fontWeight':'700','color':'#aaa','fontStyle':'italic','textDecoration':'line-through'} : {'fontWeight':'700','color': params.value > 25 ? '#16a34a' : params.value > 12 ? '#ca8a04' : '#dc2626'}"}},
 
         # Score projection group
         {"headerName": "Score Projection", "children": [
@@ -888,7 +875,7 @@ def render_today_table(store_data, urgency_field):
             "sortable": True, "filter": True, "resizable": True,
             "minWidth": 40, "cellDataType": False,
             "suppressHeaderMenuButton": True,
-            "cellStyle": {"function": "(params.data.Picked||(params.data.Status&&params.data.Status.startsWith('❌'))) ? {'color':'#aaa','fontStyle':'italic','textDecoration':'line-through'} : {}"},
+            "cellStyle": {"function": "(params.data.Display_Status&&(params.data.Display_Status[0]==='✓'||params.data.Display_Status[0]==='❌')) ? {'color':'#aaa','fontStyle':'italic','textDecoration':'line-through'} : {}"},
         },
         columnSize="autoSize",
         dashGridOptions={
@@ -1229,13 +1216,18 @@ def _model_layout():
             ], width=8),
         ], className="mb-3"),
 
-        dbc.Row([
-            dbc.Col(dcc.Graph(id="pra-history-chart", config={"displayModeBar": False}), width=6),
-            dbc.Col(dcc.Graph(id="decay-weights-chart", config={"displayModeBar": False}), width=6),
-        ]),
-        dbc.Row([
-            dbc.Col(dcc.Graph(id="adjustment-waterfall", config={"displayModeBar": False}), width=6),
-        ]),
+        dcc.Loading(type="circle", color="#0071e3",
+                    target_components={"pra-history-chart": "figure", "decay-weights-chart": "figure",
+                                       "adjustment-waterfall": "figure", "model-summary-card": "children"},
+                    children=html.Div([
+            dbc.Row([
+                dbc.Col(dcc.Graph(id="pra-history-chart", config={"displayModeBar": False}), width=6),
+                dbc.Col(dcc.Graph(id="decay-weights-chart", config={"displayModeBar": False}), width=6),
+            ]),
+            dbc.Row([
+                dbc.Col(dcc.Graph(id="adjustment-waterfall", config={"displayModeBar": False}), width=6),
+            ]),
+        ])),
         dbc.Row([
             dbc.Col(dbc.Card(dbc.CardBody([
                 html.P("Model Fit vs Decay Rate", className="fw-semibold mb-1"),
@@ -1669,80 +1661,6 @@ def update_actual(n_clicks, pick_key, actual_pra):
 
 
 # ── Utility callbacks ────────────────────────────────────────────────────
-
-@app.callback(
-    Output("research-results", "children"),
-    Input("research-btn", "n_clicks"),
-    Input("research-clear-btn", "n_clicks"),
-    State("today-ag-grid", "selectedRows"),
-    State("today-data-store", "data"),
-    State("game-date-picker", "date"),
-    prevent_initial_call=True,
-)
-def run_research(research_clicks, clear_clicks, selected_rows, store_data, game_date):
-    from dash import ctx
-    if ctx.triggered_id == "research-clear-btn":
-        return []
-    if not selected_rows:
-        return dbc.Alert("Select 2–4 players in the table first.", color="warning", duration=4000)
-    if len(selected_rows) > 5:
-        return dbc.Alert("Select 5 or fewer players.", color="warning", duration=4000)
-
-    game_date = game_date or date.today().isoformat()
-    injuries = fetch_injuries()
-    def_ratings = get_team_defense_ratings()
-
-    from src.odds import fetch_game_lines
-    game_lines = fetch_game_lines()
-
-    player_specs = [
-        {"player_id": r["player_id"], "player_name": r["Player"],
-         "team": r["Team"], "opp": r["Opp"]}
-        for r in selected_rows
-    ]
-
-    cards = []
-    for spec in player_specs:
-        pid = spec["player_id"]
-        row_data = next((r for r in selected_rows if r["player_id"] == pid), {})
-
-        logs = get_player_game_logs(pid, allow_api_fetch=False)
-        bullets = compute_local_signals(
-            player_id=pid,
-            player_name=spec["player_name"],
-            team_abbr=spec["team"],
-            opp_abbr=spec["opp"],
-            game_date=game_date,
-            logs=logs,
-            injury_data=injuries,
-            schedule=[],
-            game_lines=game_lines,
-        )
-
-        urgency = row_data.get("Urgency", 0) or 0
-        header_color = "#16a34a" if urgency > 25 else "#ca8a04" if urgency > 12 else "#dc2626"
-
-        cards.append(dbc.Card([
-            dbc.CardHeader([
-                html.Span(spec["player_name"], style={"fontWeight": "700", "fontSize": "15px"}),
-                html.Span(f" — {spec['team']} vs {spec['opp']}",
-                          style={"color": "#6e6e73", "fontSize": "13px"}),
-                html.Span(
-                    f"Pred: {row_data.get('Pred', '—')}  Urgency: {urgency}",
-                    style={"float": "right", "fontWeight": "700",
-                           "color": header_color, "fontSize": "13px"},
-                ),
-            ], style={"background": "#f5f5f7"}),
-            dbc.CardBody(
-                html.Ul([
-                    html.Li(b, style={"fontSize": "13px", "marginBottom": "4px"})
-                    for b in bullets
-                ] or [html.Li("No signals found — game logs may not be cached yet.",
-                              style={"color": "#aaa"})]),
-            ),
-        ], className="mb-2"))
-
-    return cards
 
 
 @app.callback(
