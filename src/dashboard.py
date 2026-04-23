@@ -331,6 +331,7 @@ def _today_layout():
         dcc.Loading(
             html.Div(id="schedule-strip", className="mb-2"),
             type="circle", color="#0071e3", id="schedule-loading",
+            target_components={"loading-sentinel": "children"},
             delay_show=0, style={"minHeight": "60px"},
         ),
 
@@ -375,6 +376,7 @@ def _today_layout():
                 dcc.Loading(
                     dcc.Graph(id="scatter-chart", config={"displayModeBar": True}),
                     type="circle", color="#0071e3", delay_show=0,
+                    target_components={"loading-sentinel": "children"},
                 ),
             ]), className="mt-3"),
         ]),
@@ -540,6 +542,11 @@ app.layout = dbc.Container(
         dcc.Store(id="load-db-trigger"),
         dcc.Store(id="today-data-store"),
         dcc.Store(id="picks-store"),  # fires after a pick is written to DB
+        # Sentinel: updated by the slow data-fetch callback so all dcc.Loading
+        # components can use target_components={"loading-sentinel": "children"}
+        # to track the full loading duration. A real DOM div (not dcc.Store)
+        # so data-dash-is-loading propagates reliably.
+        html.Div(id="loading-sentinel", style={"display": "none"}),
         dcc.Interval(id="startup-check", interval=500, max_intervals=1),
         dcc.Interval(id="date-init", interval=100, max_intervals=1),
 
@@ -562,7 +569,7 @@ app.layout = dbc.Container(
                 dcc.Loading(
                     html.Div(style={"width": "28px", "height": "28px"}),
                     id="header-data-loading",
-                    target_components={"today-table-container": "children"},
+                    target_components={"loading-sentinel": "children"},
                     type="circle", color="#0071e3",
                     delay_show=0,
                     style={"display": "inline-block", "verticalAlign": "middle",
@@ -879,6 +886,7 @@ def _render_table_from_store(store_data, urgency_field):
 @app.callback(
     Output("today-table-container", "children"),
     Output("today-data-store", "data"),
+    Output("loading-sentinel", "children"),
     Input("main-tabs", "active_tab"),
     Input("clear-cache-btn", "n_clicks"),
     Input("game-date-picker", "date"),
@@ -888,22 +896,22 @@ def _render_table_from_store(store_data, urgency_field):
 )
 def load_and_render_today(tab, _, game_date, _load_trigger, urgency_field):
     if tab != "tab-today" and tab is not None:
-        return dash.no_update, None
+        return dash.no_update, None, dash.no_update
     try:
         df = build_todays_player_df(game_date=game_date)
     except Exception as e:
         print(f"[dashboard] build_todays_player_df error: {e}", flush=True)
         import traceback; traceback.print_exc()
         store = {"rows": [], "error": str(e)}
-        return html.P(f"Error loading data: {e}", className="text-danger mt-3"), store
+        return html.P(f"Error loading data: {e}", className="text-danger mt-3"), store, game_date
     if df.empty:
         print("[dashboard] df is empty", flush=True)
         store = {"rows": [], "game_date": game_date, "no_games": True}
-        return _render_table_from_store(store, urgency_field), store
+        return _render_table_from_store(store, urgency_field), store, game_date
     print(f"[dashboard] built {len(df)} rows", flush=True)
     available = [c for c in _DISPLAY_COLS if c in df.columns]
     store = {"rows": df[available].to_dict("records")}
-    return _render_table_from_store(store, urgency_field), store
+    return _render_table_from_store(store, urgency_field), store, game_date
 
 
 @app.callback(
