@@ -5,6 +5,8 @@ SQLite persistence layer — all fetched data lives here.
   - odds_per_game         Vegas moneyline per-game win probs
   - series_standings      W-L records per series
   - de_projections        DraftEdge PTS/REB/AST for a given date
+  - fd_projections        FanDuel PTS/REB/AST for a given date
+  - injuries              current ESPN injury report (no date, always-current)
   - game_logs             player game logs (last 20, TTL 6h)
   - rosters               team rosters (TTL 24h)
   - team_defense_ratings  DEF_RATING per team/season (TTL 24h)
@@ -91,6 +93,25 @@ def init_db() -> None:
             def_rating REAL,
             fetched_at TEXT NOT NULL,
             PRIMARY KEY (team_id, season)
+        );
+
+        CREATE TABLE IF NOT EXISTS fd_projections (
+            date       TEXT NOT NULL,
+            player_id  INTEGER NOT NULL,
+            pts        REAL,
+            reb        REAL,
+            ast        REAL,
+            pra        REAL,
+            min        REAL,
+            fetched_at TEXT NOT NULL,
+            PRIMARY KEY (date, player_id)
+        );
+
+        CREATE TABLE IF NOT EXISTS injuries (
+            player_name TEXT PRIMARY KEY,
+            status      TEXT,
+            comment     TEXT,
+            fetched_at  TEXT NOT NULL
         );
 
         CREATE TABLE IF NOT EXISTS game_lines (
@@ -429,6 +450,71 @@ def get_latest_game_lines() -> dict[str, dict]:
     }
 
 
+def upsert_fd_projections(game_date: str, projections: dict[int, dict]) -> None:
+    now = datetime.utcnow().isoformat()
+    rows = [
+        {
+            "date": game_date,
+            "player_id": pid,
+            "pts": p.get("pts"),
+            "reb": p.get("reb"),
+            "ast": p.get("ast"),
+            "pra": p.get("pra"),
+            "min": p.get("min"),
+            "fetched_at": now,
+        }
+        for pid, p in projections.items()
+    ]
+    with _conn() as cx:
+        cx.executemany(
+            """INSERT OR REPLACE INTO fd_projections
+               (date, player_id, pts, reb, ast, pra, min, fetched_at)
+               VALUES (:date, :player_id, :pts, :reb, :ast, :pra, :min, :fetched_at)""",
+            rows,
+        )
+    print(f"[db] upserted {len(rows)} FanDuel projections for {game_date}")
+
+
+def get_fd_projections(game_date: str) -> dict[int, dict]:
+    with _conn() as cx:
+        rows = cx.execute(
+            "SELECT player_id, pts, reb, ast, pra, min FROM fd_projections WHERE date = ?",
+            (game_date,),
+        ).fetchall()
+    return {
+        r["player_id"]: {
+            "pts": r["pts"], "reb": r["reb"], "ast": r["ast"],
+            "pra": r["pra"], "min": r["min"],
+        }
+        for r in rows
+    }
+
+
+def upsert_injuries(injuries: dict[str, dict]) -> None:
+    now = datetime.utcnow().isoformat()
+    rows = [
+        {"player_name": name, "status": v.get("status", ""),
+         "comment": v.get("comment", ""), "fetched_at": now}
+        for name, v in injuries.items()
+    ]
+    with _conn() as cx:
+        cx.execute("DELETE FROM injuries")
+        cx.executemany(
+            """INSERT INTO injuries (player_name, status, comment, fetched_at)
+               VALUES (:player_name, :status, :comment, :fetched_at)""",
+            rows,
+        )
+    print(f"[db] upserted {len(rows)} injury entries")
+
+
+def get_injuries() -> dict[str, dict]:
+    with _conn() as cx:
+        rows = cx.execute(
+            "SELECT player_name, status, comment FROM injuries"
+        ).fetchall()
+    return {r["player_name"]: {"status": r["status"], "comment": r["comment"]} for r in rows}
+
+
 def get_known_game_dates() -> list[str]:
     """Returns all distinct game dates stored in the schedule table."""
     with _conn() as cx:
@@ -443,7 +529,9 @@ def get_last_updated(game_date: str) -> str | None:
             SELECT MAX(ts) FROM (
                 SELECT MAX(fetched_at) AS ts FROM de_projections WHERE date = ?
                 UNION ALL
+                SELECT MAX(fetched_at) AS ts FROM fd_projections WHERE date = ?
+                UNION ALL
                 SELECT MAX(fetched_at) AS ts FROM odds_per_game WHERE date = ?
             )
-        """, (game_date, game_date)).fetchone()
+        """, (game_date, game_date, game_date)).fetchone()
     return row[0] if row and row[0] else None

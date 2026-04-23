@@ -27,6 +27,8 @@ from src.db import (
     upsert_game_lines,
     upsert_series_standings,
     upsert_de_projections,
+    upsert_fd_projections,
+    upsert_injuries,
     get_game_logs,
     get_def_ratings,
 )
@@ -100,8 +102,39 @@ def update_series_standings(season: str) -> None:
         print(f"  {h} {s['home_wins']}-{s['away_wins']} {a}")
 
 
+def update_fd_projections(game_date: str) -> None:
+    _step(4, "FanDuel projections")
+    _bust("fanduel_projections")
+    from src.external import fetch_fanduel_projections
+    from nba_api.stats.static import players as nba_players
+    projs = fetch_fanduel_projections()
+    if not projs:
+        print("  No projections found (no slate today?).")
+        return
+    upsert_fd_projections(game_date, projs)
+    id_to_name = {p["id"]: p["full_name"] for p in nba_players.get_players()}
+    for pid, p in sorted(projs.items(), key=lambda x: -(x[1]["pra"] or 0))[:10]:
+        print(f"  {id_to_name.get(pid, pid)}: PRA={p['pra']}")
+    if len(projs) > 10:
+        print(f"  ... and {len(projs) - 10} more")
+
+
+def update_injuries() -> None:
+    _step(5, "Injuries (ESPN)")
+    _bust("espn_injuries")
+    from src.external import fetch_injuries
+    injuries = fetch_injuries()
+    if not injuries:
+        print("  No injury data returned.")
+        return
+    upsert_injuries(injuries)
+    out = [n for n, v in injuries.items() if v.get("status") == "Out"]
+    dtd = [n for n, v in injuries.items() if v.get("status") == "Day-To-Day"]
+    print(f"  {len(out)} Out, {len(dtd)} Day-To-Day ({len(injuries)} total)")
+
+
 def update_de_projections(game_date: str) -> None:
-    _step(4, "DraftEdge projections")
+    _step(6, "DraftEdge projections")
     _bust("draftedge_projections")
     from src.external import fetch_draftedge_projections
     from nba_api.stats.static import players as nba_players
@@ -118,7 +151,7 @@ def update_de_projections(game_date: str) -> None:
 
 
 def update_def_ratings(season: str) -> None:
-    _step(5, "Defense ratings")
+    _step(7, "Defense ratings")
     df, is_fresh = get_def_ratings(season)
     if is_fresh:
         print("  Already fresh (< 24h) — skipping.")
@@ -141,7 +174,7 @@ def _get_playoff_team_ids(season: str) -> list[int]:
 
 
 def update_game_logs(games: list[dict], season: str) -> None:
-    _step(6, "Game logs — all playoff teams (skips players fresh < 6h)")
+    _step(8, "Game logs — all playoff teams (skips players fresh < 6h)")
     from src.data_fetcher import get_active_roster, get_player_game_logs
 
     # Cover all 16 playoff teams, not just today's matchups.
@@ -191,13 +224,15 @@ def main() -> None:
     games = update_schedule(args.date)
     update_odds(args.date)
     update_series_standings(CURRENT_SEASON)
+    update_fd_projections(args.date)
+    update_injuries()
     update_de_projections(args.date)
     update_def_ratings(CURRENT_SEASON)
 
     if args.skip_logs:
-        print("\n[6] Game logs — skipped (--skip-logs)")
+        print("\n[8] Game logs — skipped (--skip-logs)")
     elif not games:
-        print("\n[6] Game logs — skipped (no games for this date)")
+        print("\n[8] Game logs — skipped (no games for this date)")
     else:
         update_game_logs(games, CURRENT_SEASON)
 

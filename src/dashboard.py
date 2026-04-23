@@ -40,6 +40,8 @@ from src.db import (
     get_latest_odds as db_get_latest_odds,
     get_series_standings as db_get_series_standings,
     get_de_projections as db_get_de_projections,
+    get_fd_projections as db_get_fd_projections,
+    get_injuries as db_get_injuries,
     get_game_lines as db_get_game_lines,
     get_latest_game_lines as db_get_latest_game_lines,
     get_last_updated as db_get_last_updated,
@@ -177,8 +179,8 @@ def build_todays_player_df(game_date: str | None = None, current_round: int = 1)
     # Only fall back to live DE / live game lines for today's date.
     # For past dates the live APIs return today's data which would be wrong.
     de_projs = db_de if db_de else (fetch_draftedge_projections() if is_today else {})
-    fd_projs = fetch_fanduel_projections() if is_today else {}
-    injuries = fetch_injuries()  # {name_lower: {status, comment}}
+    fd_projs = db_get_fd_projections(game_date) or (fetch_fanduel_projections() if is_today else {})
+    injuries = db_get_injuries() or (fetch_injuries() if is_today else {})
 
     from src.odds import fetch_game_lines
     game_lines = db_get_game_lines(game_date) or (
