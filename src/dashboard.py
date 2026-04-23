@@ -334,8 +334,8 @@ def _today_layout():
 
         # ── Sub-tabs ────────────────────────────────────────────────────
         dbc.Tabs(id="today-subtabs", active_tab="subtab-players", className="mt-1", children=[
-            dbc.Tab(label="Players", tab_id="subtab-players"),
-            dbc.Tab(label="Compare", tab_id="subtab-compare"),
+            dbc.Tab(label="Browse Players", tab_id="subtab-players"),
+            dbc.Tab(label="Compare Players", tab_id="subtab-compare"),
         ]),
 
         # ── Players subtab ──────────────────────────────────────────────
@@ -363,23 +363,6 @@ def _today_layout():
             dbc.Card(dbc.CardBody([
                 dbc.Row([
                     dbc.Col([
-                        html.P("Player Research", className="fw-semibold mb-0",
-                               style={"fontSize": "13px"}),
-                        html.P("Select 2–4 players in the table, then click Analyze.",
-                               className="text-muted mb-0", style={"fontSize": "12px"}),
-                    ]),
-                    dbc.Col([
-                        dbc.Button("Analyze Selected", id="research-btn",
-                                   color="primary", size="sm", className="me-2"),
-                        dbc.Button("Clear", id="research-clear-btn",
-                                   color="light", size="sm"),
-                    ], width="auto", className="d-flex align-items-center"),
-                ], className="align-items-center mb-2"),
-                dbc.Spinner(html.Div(id="research-results"), size="sm", color="primary"),
-            ]), className="mt-3"),
-            dbc.Card(dbc.CardBody([
-                dbc.Row([
-                    dbc.Col([
                         html.P("Urgency vs. Projected PRA",
                                className="fw-semibold mb-0", style={"fontSize": "13px"}),
                         html.P("Top-right = pick now.  Top-left = save for later.",
@@ -390,8 +373,25 @@ def _today_layout():
             ]), className="mt-3"),
         ]),
 
-        # ── Compare subtab ──────────────────────────────────────────────
+        # ── Compare Players subtab ───────────────────────────────────────
         html.Div(id="subtab-compare-pane", className="mt-3", style={"display": "none"}, children=[
+            dbc.Card(dbc.CardBody([
+                dbc.Row([
+                    dbc.Col([
+                        html.P("Player Research", className="fw-semibold mb-0",
+                               style={"fontSize": "13px"}),
+                        html.P("Select 2–4 players in the table above, then click Analyze.",
+                               className="text-muted mb-0", style={"fontSize": "12px"}),
+                    ]),
+                    dbc.Col([
+                        dbc.Button("Analyze Selected", id="research-btn",
+                                   color="primary", size="sm", className="me-2"),
+                        dbc.Button("Clear", id="research-clear-btn",
+                                   color="light", size="sm"),
+                    ], width="auto", className="d-flex align-items-center"),
+                ], className="align-items-center mb-2"),
+                dbc.Spinner(html.Div(id="research-results"), size="sm", color="primary"),
+            ]), className="mb-3"),
             dbc.Card(dbc.CardBody([
                 dbc.Row([
                     dbc.Col(
@@ -666,8 +666,8 @@ def check_db_status(_, store_data):
     loading = store_data is None
     return dbc.Alert(
         [
-            html.Strong("Today's data hasn't been loaded yet. "),
-            "Odds will disappear at tip-off and projections may be stale. ",
+            html.Strong("No data for today. "),
+            "Run a data refresh to load today's schedule and projections. ",
             html.Span([
                 dbc.Spinner(size="sm", color="warning", className="ms-2"),
                 html.Span(" Loading…", className="ms-1 small text-muted"),
@@ -1862,7 +1862,10 @@ if not _os.environ.get("WERKZEUG_RUN_MAIN") and not _os.environ.get("DTTF_NO_SCH
 
     _scheduler = BackgroundScheduler(daemon=True)
     # Every 30 min: fast refresh (odds, schedule, DraftEdge, series — ~10s)
-    _scheduler.add_job(_run_update, "interval", minutes=30, kwargs={"skip_logs": True})
+    # start_date delays first run by 2 min so the app finishes booting first
+    from datetime import datetime as _dt, timedelta as _td
+    _first_run = _dt.now() + _td(minutes=2)
+    _scheduler.add_job(_run_update, "interval", minutes=30, next_run_time=_first_run, kwargs={"skip_logs": True})
     # Daily at 6am: full refresh including game logs (~5 min)
     _scheduler.add_job(_run_update, "cron", hour=6, minute=0, kwargs={"skip_logs": False})
     _scheduler.start()
