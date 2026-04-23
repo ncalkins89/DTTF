@@ -899,6 +899,7 @@ def render_today_table(store_data, urgency_field):
             "tooltipShowDelay": 200,
             "tooltipHideDelay": 6000,
             "autoSizeStrategy": {"type": "fitCellContents", "skipHeader": False},
+            "onGridSizeChanged": {"function": "params.api.autoSizeAllColumns(false)"},
         },
         style={"height": "500px"},
         className="ag-theme-alpine",
