@@ -138,18 +138,15 @@ def get_player_game_logs(
 
 
 def get_player_game_logs_365(player_id: int) -> pd.DataFrame:
-    """All game logs from the past 365 calendar days (current + prior season, DB only)."""
+    """Full game logs for current + prior season (DB only, no date cap)."""
     import pandas as pd
-    from datetime import date, timedelta
     from src.db import get_game_logs
-    cutoff = pd.Timestamp(date.today() - timedelta(days=365))
     cur, _ = get_game_logs(player_id, CURRENT_SEASON)
     prior, _ = get_game_logs(player_id, PRIOR_SEASON, ttl_seconds=30 * 86400)
     parts = [df for df in [cur, prior] if not df.empty]
     if not parts:
         return pd.DataFrame()
-    combined = pd.concat(parts).sort_values("GAME_DATE", ascending=False).reset_index(drop=True)
-    return combined[combined["GAME_DATE"] >= cutoff].reset_index(drop=True)
+    return pd.concat(parts).sort_values("GAME_DATE", ascending=False).reset_index(drop=True)
 
 
 def get_player_game_logs_season(
