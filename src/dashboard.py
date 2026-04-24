@@ -477,16 +477,22 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Ar
 .btn-sm { border-radius: 8px; font-size: 13px; }
 .form-control, .form-select { border-radius: 8px; border-color: #d2d2d7; font-size: 13px; }
 .schedule-chip { display:inline-block; background:#fff; border:1px solid #d2d2d7; border-radius:10px; padding:8px 14px; margin:3px; font-size:12px; box-shadow:0 1px 3px rgba(0,0,0,.06); }
-.date-nav-btn { background:none; border:none; font-size:22px; color:#0071e3; cursor:pointer; padding:0 8px; line-height:1; }
+.date-nav-btn { background:none; border:none; font-size:22px; color:#0071e3; cursor:pointer; padding:0 8px; line-height:1; flex-shrink:0; }
 .date-nav-btn:hover { color:#0051a8; }
-.date-chip { display:inline-flex; flex-direction:column; align-items:center; padding:6px 11px; border-radius:8px; cursor:pointer; min-width:52px; transition:background 0.12s; user-select:none; }
+/* All chips identical fixed size — only color/bg changes for active/hover */
+.date-chip { display:inline-flex; flex-direction:column; align-items:center; padding:5px 0; border-radius:8px; cursor:pointer; width:54px; flex-shrink:0; transition:background 0.12s; user-select:none; box-sizing:border-box; }
 .date-chip:hover:not(.no-game) { background:#e5e5ea; }
-.date-chip.active { background:transparent !important; }
-.date-chip.active .date-chip-day { color:#6e6e73; font-weight:600; }
-.date-chip.active .date-chip-num { color:#1d1d1f; font-weight:800; font-size:18px; }
+.date-chip.active { background:#0071e3 !important; }
+.date-chip.active .date-chip-day { color:rgba(255,255,255,0.8) !important; }
+.date-chip.active .date-chip-num, .date-chip.active .date-chip-num span { color:#fff !important; }
 .date-chip.no-game { opacity:0.3; cursor:default; }
-.date-chip-day { font-size:10px; font-weight:500; color:#8e8e93; letter-spacing:0.6px; text-transform:uppercase; line-height:1.4; }
-.date-chip-num { font-size:15px; font-weight:600; color:#1d1d1f; line-height:1.2; }
+.date-chip-day { font-size:10px; font-weight:500; color:#8e8e93; letter-spacing:0.6px; text-transform:uppercase; line-height:1.5; white-space:nowrap; }
+.date-chip-num { font-size:14px; font-weight:600; color:#1d1d1f; line-height:1.3; white-space:nowrap; }
+/* Hide the date picker text input — show only the calendar popup */
+#date-picker-wrapper .SingleDatePickerInput__withBorder { border:none !important; background:transparent !important; }
+#date-picker-wrapper input.DateInput_input { opacity:0; height:1px; padding:0; margin:0; min-width:0; width:1px; position:absolute; }
+#date-picker-wrapper .DateInput { width:1px; overflow:hidden; }
+#date-picker-wrapper .SingleDatePickerInput_calendarIcon { display:none !important; }
 .ag-header-group-cell-label { justify-content: center !important; font-weight: 600; color: #1d1d1f; }
 .ag-theme-alpine .ag-cell { padding-left: 8px !important; padding-right: 8px !important; }
 .ag-theme-alpine .ag-header-cell { padding-left: 8px !important; padding-right: 8px !important; }
