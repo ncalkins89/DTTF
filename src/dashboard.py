@@ -376,9 +376,6 @@ def _today_layout():
                 html.Button("›", id="date-next-btn", className="date-nav-btn"),
                 html.Button("🗓", id="date-cal-btn", className="date-nav-btn",
                             style={"fontSize": "17px", "marginLeft": "4px", "opacity": "0.65"}),
-                # Divider
-                html.Div(style={"width": "1px", "height": "24px", "background": "#d2d2d7",
-                                "margin": "0 10px"}),
                 dcc.Loading(
                     html.Div(style={"width": "20px", "height": "20px"}),
                     id="header-data-loading",
@@ -387,8 +384,6 @@ def _today_layout():
                     style={"display": "inline-block", "verticalAlign": "middle",
                            "width": "20px", "height": "20px"},
                 ),
-                html.Span(id="last-updated-text",
-                          style={"fontSize": "11px", "color": "#8e8e93", "marginLeft": "6px"}),
             ], style={"display": "flex", "alignItems": "center", "gap": "0",
                       "background": "#f5f5f7", "borderRadius": "10px",
                       "padding": "4px 8px", "width": "fit-content"}),
@@ -626,11 +621,16 @@ app.layout = dbc.Container(
             dbc.Col(html.H4("🏀 Drive to the Finals",
                             style={"fontWeight": "700", "letterSpacing": "-0.5px", "margin": "0"}),
                     width="auto", className="d-flex align-items-center"),
+            dbc.Col(
+                html.Span(id="last-updated-text",
+                          style={"fontSize": "11px", "color": "#8e8e93"}),
+                width="auto", className="d-flex align-items-center ms-3",
+            ),
             dbc.Col([
                 dbc.Button("Clear Cache", id="clear-cache-btn", color="light", size="sm", className="me-1"),
                 html.Span(id="cache-status", className="text-muted small ms-2"),
             ], width="auto", className="d-flex align-items-center ms-auto"),
-        ], className="py-3 mb-2 align-items-center",
+        ], className="py-2 mb-2 align-items-center",
            style={"borderBottom": "1px solid #d2d2d7"}),
 
         html.Div(id="db-status-banner"),
@@ -759,26 +759,41 @@ def render_date_strip(offset, selected_date):
     week_start = anchor - timedelta(days=anchor.weekday())  # Monday
 
     game_dates = set(db_get_known_game_dates())
+    today_iso = today.isoformat()
     chips = []
     for i in range(7):
         d = week_start + timedelta(days=i)
         d_iso = d.isoformat()
         is_active = d == selected
         has_game = d_iso in game_dates
+        is_past = d_iso < today_iso
+        # Dim only past dates with no known games (future dates may not be in DB yet)
+        dim = is_past and not has_game
         cls = "date-chip"
         if is_active:
             cls += " active"
-        if not has_game:
+        if dim:
             cls += " no-game"
+        clickable = not dim
         chips.append(
             html.Div(
                 [
                     html.Div(d.strftime("%a").upper(), className="date-chip-day"),
-                    html.Div(str(d.day), className="date-chip-num"),
+                    html.Div(
+                        [
+                            html.Span(d.strftime("%b").upper(),
+                                      style={"fontSize": "9px", "marginRight": "3px",
+                                             "opacity": "0.7"}),
+                            html.Span(str(d.day)),
+                        ],
+                        className="date-chip-num",
+                        style={"display": "flex", "alignItems": "baseline",
+                               "justifyContent": "center"},
+                    ),
                 ],
                 className=cls,
                 id={"type": "date-chip", "date": d_iso},
-                n_clicks=0 if has_game else None,
+                n_clicks=0 if clickable else None,
             )
         )
     return chips
@@ -824,27 +839,48 @@ def update_date_label(game_date):
         return ""
 
 
-# Calendar icon: make the invisible picker pointer-events live, then JS-click its button.
+@app.callback(
+    Output("date-picker-wrapper", "style"),
+    Input("date-cal-btn", "n_clicks"),
+    Input("game-date-picker", "date"),
+    State("date-picker-wrapper", "style"),
+    prevent_initial_call=True,
+)
+def toggle_calendar(cal_clicks, _date_selected, current_style):
+    triggered = callback_context.triggered_id
+    # Close when a date is picked
+    if triggered == "game-date-picker":
+        return {"position": "absolute", "top": "44px", "left": "0",
+                "opacity": "0", "pointerEvents": "none", "height": "0",
+                "overflow": "visible", "zIndex": "1000"}
+    # Toggle on calendar icon click
+    is_hidden = not current_style or current_style.get("pointerEvents") == "none"
+    if is_hidden:
+        return {"position": "absolute", "top": "44px", "left": "0",
+                "zIndex": "1000", "background": "#fff"}
+    return {"position": "absolute", "top": "44px", "left": "0",
+            "opacity": "0", "pointerEvents": "none", "height": "0",
+            "overflow": "visible", "zIndex": "1000"}
+
+
+# After the picker becomes visible, JS clicks its input to open the calendar immediately.
 app.clientside_callback(
     """
-    function(n_clicks) {
-        if (!n_clicks) return window.dash_clientside.no_update;
-        var wrapper = document.getElementById('date-picker-wrapper');
-        if (!wrapper) return window.dash_clientside.no_update;
-        // Briefly restore pointer events so the popup can open
-        wrapper.style.pointerEvents = 'auto';
-        // Click the calendar button inside the DatePickerSingle
+    function(style) {
+        if (!style || style.opacity === '0' || style.pointerEvents === 'none') {
+            return window.dash_clientside.no_update;
+        }
         setTimeout(function() {
-            var btn = wrapper.querySelector('button[type="button"]');
-            if (btn) btn.click();
-            // Re-hide after a moment (popup stays open independently)
-            setTimeout(function() { wrapper.style.pointerEvents = 'none'; }, 300);
-        }, 20);
+            var wrapper = document.getElementById('date-picker-wrapper');
+            if (!wrapper) return;
+            var input = wrapper.querySelector('input[type="text"]');
+            if (input) { input.focus(); input.click(); }
+        }, 30);
         return window.dash_clientside.no_update;
     }
     """,
     Output("date-cal-btn", "title"),
-    Input("date-cal-btn", "n_clicks"),
+    Input("date-picker-wrapper", "style"),
     prevent_initial_call=True,
 )
 
@@ -1995,21 +2031,25 @@ def handle_clear_cache(n_clicks):
 @app.callback(
     Output("last-updated-text", "children"),
     Input("today-data-store", "data"),
-    Input("game-date-picker", "date"),
 )
-def update_last_updated(_, game_date):
-    if not game_date:
-        return ""
-    gd = str(game_date)[:10]
-    ts = db_get_last_updated(gd)
+def update_last_updated(_):
+    # Show the most recent data update across all dates (DB freshness indicator)
+    from src.db import get_last_updated as _get_latest
+    today = date.today().isoformat()
+    ts = _get_latest(today)
     if not ts:
-        return "Not loaded"
+        # Fall back to checking yesterday
+        from datetime import timedelta
+        yesterday = (date.today() - timedelta(days=1)).isoformat()
+        ts = _get_latest(yesterday)
+    if not ts:
+        return ""
     try:
         dt = datetime.fromisoformat(ts).replace(tzinfo=timezone.utc)
         pt = dt.astimezone(ZoneInfo("America/Los_Angeles"))
-        return f"Updated {pt.strftime('%b %-d %-I:%M %p PT')}"
+        return f"DB updated {pt.strftime('%b %-d, %-I:%M %p PT')}"
     except Exception:
-        return f"Updated {ts[:16]}"
+        return f"DB updated {ts[:16]}"
 
 
 @app.callback(
