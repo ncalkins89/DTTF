@@ -318,6 +318,32 @@ def upsert_game_logs(player_id: int, season: str, logs_df) -> None:
         )
 
 
+def get_all_game_logs_batch(player_ids: list[int], seasons: list[str]) -> dict:
+    """Fetch all game logs for the given player IDs and seasons in one query.
+
+    Returns {(player_id, season): DataFrame} only for combos that have rows.
+    """
+    import pandas as pd
+    if not player_ids or not seasons:
+        return {}
+    ph_p = ",".join("?" * len(player_ids))
+    ph_s = ",".join("?" * len(seasons))
+    with _conn() as cx:
+        rows = cx.execute(
+            f"SELECT * FROM game_logs WHERE player_id IN ({ph_p}) AND season IN ({ph_s})",
+            (*player_ids, *seasons),
+        ).fetchall()
+    if not rows:
+        return {}
+    df_all = pd.DataFrame([dict(r) for r in rows])
+    df_all.columns = [c.upper() if c != "fetched_at" else c for c in df_all.columns]
+    df_all["GAME_DATE"] = pd.to_datetime(df_all["GAME_DATE"])
+    result = {}
+    for (pid, season), grp in df_all.groupby(["PLAYER_ID", "SEASON"]):
+        result[(int(pid), season)] = grp.sort_values("GAME_DATE", ascending=False).reset_index(drop=True)
+    return result
+
+
 def get_game_logs(player_id: int, season: str, ttl_seconds: int = 21600):
     """Returns (df, is_fresh). df is empty if no rows; is_fresh=False means re-fetch."""
     import pandas as pd

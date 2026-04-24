@@ -27,7 +27,6 @@ from src.data_fetcher import (
     clear_cache,
     get_active_roster,
     get_player_game_logs,
-    get_player_game_logs_365,
     get_series_standings,
     get_team_defense_ratings,
     get_todays_games,
@@ -49,6 +48,7 @@ from src.db import (
     get_last_updated as db_get_last_updated,
     get_known_game_dates as db_get_known_game_dates,
     get_game_logs as db_get_game_logs,
+    get_all_game_logs_batch as db_get_all_game_logs_batch,
 )
 from src.picks import (
     get_pick_history,
@@ -190,7 +190,10 @@ def build_todays_player_df(game_date: str | None = None, current_round: int = 1)
         (db_get_latest_game_lines() or fetch_game_lines()) if is_today else {}
     )
 
-    rows = []
+    from src.data_fetcher import CURRENT_SEASON as _CS, PRIOR_SEASON as _PS
+
+    # Collect all (team, opp) pairs and rosters first so we can batch-load logs.
+    team_game_info = []
     for game in games:
         for team_id, opp_team_id, team_abbr, opp_abbr, is_home in [
             (game["home_team_id"], game["away_team_id"],
@@ -199,119 +202,130 @@ def build_todays_player_df(game_date: str | None = None, current_round: int = 1)
              game["away_team_abbr"], game["home_team_abbr"], False),
         ]:
             roster = get_active_roster(team_id)
-            series_record = get_series_record_for_team(team_abbr, series_standings, TEAM_MAP)
-            # per_game_win_prob: probability of winning a SINGLE game (for Markov chain).
-            # Distinct from series_win_prob, which is the output of the Markov chain.
-            per_game_p = per_game_probs.get(team_abbr, 0.5)
-            series_win_prob = series_win_probs.get(team_abbr, 0.5)
+            team_game_info.append((team_id, opp_team_id, team_abbr, opp_abbr, is_home, roster, game))
 
-            for player in roster:
-                pid = player["player_id"]
-                logs = get_player_game_logs_365(pid)
-                proj = project_player(
-                    player_id=pid,
-                    opponent_team_id=opp_team_id,
-                    game_logs=logs,
-                    def_ratings=def_ratings,
-                    series_record=series_record,
-                    per_game_win_prob=per_game_p,   # correct: single-game probability
-                    current_round=current_round,
-                )
-                ext_key = f"{game_date}_{pid}"
-                ext_pra = ext_projs.get(ext_key)
-                de = de_projs.get(pid)
-                de_pra = de["pra"] if de else None
-                fd = fd_projs.get(pid)
-                fd_pra = fd["pra"] if fd else None
+    all_pids = list({p["player_id"] for _, _, _, _, _, roster, _ in team_game_info for p in roster})
+    log_cache = db_get_all_game_logs_batch(all_pids, [_CS, _PS])
 
-                # RS and playoff averages from game logs
-                rs_avg = playoff_avg = None
-                if not logs.empty:
-                    rs = logs[logs["SEASON_TYPE"] == "Regular Season"]
-                    pl = logs[logs["SEASON_TYPE"] == "Playoffs"]
-                    if not rs.empty:
-                        rs_avg = round(rs["PRA"].mean(), 1)
-                    if not pl.empty:
-                        playoff_avg = round(pl["PRA"].mean(), 1)
+    def _get_logs_365(pid: int) -> pd.DataFrame:
+        cur = log_cache.get((pid, _CS), pd.DataFrame())
+        prior = log_cache.get((pid, _PS), pd.DataFrame())
+        parts = [df for df in [cur, prior] if not df.empty]
+        if not parts:
+            return pd.DataFrame()
+        return pd.concat(parts).sort_values("GAME_DATE", ascending=False).reset_index(drop=True)
 
-                # Injury flag: only meaningful when DE data is loaded for today.
-                has_recent_games = not logs.empty
-                de_loaded = len(de_projs) > 10
-                likely_out = has_recent_games and de is None and de_loaded
+    rows = []
+    for team_id, opp_team_id, team_abbr, opp_abbr, is_home, roster, game in team_game_info:
+        series_record = get_series_record_for_team(team_abbr, series_standings, TEAM_MAP)
+        per_game_p = per_game_probs.get(team_abbr, 0.5)
+        series_win_prob = series_win_probs.get(team_abbr, 0.5)
 
-                our_pra = proj["projected_pra"]
-                all_sources = [p for p in [our_pra, de_pra, fd_pra, playoff_avg] if p is not None]
-                pred_pra = round(sum(all_sources) / len(all_sources), 1)
+        for player in roster:
+            pid = player["player_id"]
+            logs = _get_logs_365(pid)
+            proj = project_player(
+                player_id=pid,
+                opponent_team_id=opp_team_id,
+                game_logs=logs,
+                def_ratings=def_ratings,
+                series_record=series_record,
+                per_game_win_prob=per_game_p,
+                current_round=current_round,
+            )
+            ext_key = f"{game_date}_{pid}"
+            ext_pra = ext_projs.get(ext_key)
+            de = de_projs.get(pid)
+            de_pra = de["pra"] if de else None
+            fd = fd_projs.get(pid)
+            fd_pra = fd["pra"] if fd else None
 
-                lose_prob = 1.0 - series_win_prob
-                pred_urgency = round(pred_pra * lose_prob, 2)
-                urgency_ours = round(our_pra * lose_prob, 2)
-                urgency_de   = round(de_pra  * lose_prob, 2) if de_pra  is not None else None
-                urgency_fd   = round(fd_pra  * lose_prob, 2) if fd_pra  is not None else None
+            rs_avg = playoff_avg = None
+            if not logs.empty:
+                rs = logs[logs["SEASON_TYPE"] == "Regular Season"]
+                pl = logs[logs["SEASON_TYPE"] == "Playoffs"]
+                if not rs.empty:
+                    rs_avg = round(rs["PRA"].mean(), 1)
+                if not pl.empty:
+                    playoff_avg = round(pl["PRA"].mean(), 1)
 
-                inj = injuries.get(player["player_name"].lower(), {})
-                inj_status = inj.get("status", "")
-                inj_comment = inj.get("comment", "")
-                if inj_status == "Out":
-                    status = "❌ Out"
-                elif inj_status == "Day-To-Day":
-                    status = "⚠ DTD"
-                else:
-                    status = ""
+            has_recent_games = not logs.empty
+            de_loaded = len(de_projs) > 10
+            likely_out = has_recent_games and de is None and de_loaded
 
-                signal_bullets = compute_local_signals(
-                    player_id=pid,
-                    player_name=player["player_name"],
-                    team_abbr=team_abbr,
-                    opp_abbr=opp_abbr,
-                    game_date=game_date,
-                    logs=logs,
-                    injury_data=injuries,
-                    schedule=[],
-                    game_lines=game_lines,
-                )
-                if inj_comment:
-                    signal_bullets = [f"🩹 {inj_comment}"] + signal_bullets
-                signals_text = "\n".join(signal_bullets) if signal_bullets else ""
+            our_pra = proj["projected_pra"]
+            all_sources = [p for p in [our_pra, de_pra, fd_pra, playoff_avg] if p is not None]
+            pred_pra = round(sum(all_sources) / len(all_sources), 1)
 
-                rows.append({
-                    "player_id": pid,
-                    "Player": player["player_name"],
-                    "Pos": player["position"],
-                    "Team": team_abbr,
-                    "Opp": opp_abbr,
-                    "Status": status,
-                    "Pred": pred_pra,
-                    "Our Proj": our_pra,
-                    "DE Proj": de_pra if de_pra is not None else None,
-                    "DE Pts": de["pts"] if de else None,
-                    "DE Reb": de["reb"] if de else None,
-                    "DE Ast": de["ast"] if de else None,
-                    "FD Proj": fd_pra if fd_pra is not None else None,
-                    "FD Pts": fd["pts"] if fd else None,
-                    "FD Reb": fd["reb"] if fd else None,
-                    "FD Ast": fd["ast"] if fd else None,
-                    "FD Min": fd["min"] if fd else None,
-                    "RS Avg": rs_avg,
-                    "PO Avg": playoff_avg,
-                    "Ext Proj": ext_pra,
-                    "Series Win%": round(series_win_prob, 3),
-                    "series_win_prob_raw": series_win_prob,
-                    "series_lose_prob_raw": round(1.0 - series_win_prob, 3),
-                    "Urgency": pred_urgency,
-                    "Urgency_Ours": urgency_ours,
-                    "Urgency_DE": urgency_de,
-                    "Urgency_FD": urgency_fd,
-                    "Exp Games": proj["expected_future_games"],
-                    "Picked": pid in used_ids,
-                    "game_id": game["game_id"],
-                    "Inj Note": inj_comment if inj_comment else None,
-                    "Signals": signals_text,
-                    "is_home": is_home,
-                    "team_wins": series_record["wins"],
-                    "team_losses": series_record["losses"],
-                    "_proj": proj,
-                })
+            lose_prob = 1.0 - series_win_prob
+            pred_urgency = round(pred_pra * lose_prob, 2)
+            urgency_ours = round(our_pra * lose_prob, 2)
+            urgency_de   = round(de_pra  * lose_prob, 2) if de_pra  is not None else None
+            urgency_fd   = round(fd_pra  * lose_prob, 2) if fd_pra  is not None else None
+
+            inj = injuries.get(player["player_name"].lower(), {})
+            inj_status = inj.get("status", "")
+            inj_comment = inj.get("comment", "")
+            if inj_status == "Out":
+                status = "❌ Out"
+            elif inj_status == "Day-To-Day":
+                status = "⚠ DTD"
+            else:
+                status = ""
+
+            signal_bullets = compute_local_signals(
+                player_id=pid,
+                player_name=player["player_name"],
+                team_abbr=team_abbr,
+                opp_abbr=opp_abbr,
+                game_date=game_date,
+                logs=logs,
+                injury_data=injuries,
+                schedule=[],
+                game_lines=game_lines,
+            )
+            if inj_comment:
+                signal_bullets = [f"🩹 {inj_comment}"] + signal_bullets
+            signals_text = "\n".join(signal_bullets) if signal_bullets else ""
+
+            rows.append({
+                "player_id": pid,
+                "Player": player["player_name"],
+                "Pos": player["position"],
+                "Team": team_abbr,
+                "Opp": opp_abbr,
+                "Status": status,
+                "Pred": pred_pra,
+                "Our Proj": our_pra,
+                "DE Proj": de_pra if de_pra is not None else None,
+                "DE Pts": de["pts"] if de else None,
+                "DE Reb": de["reb"] if de else None,
+                "DE Ast": de["ast"] if de else None,
+                "FD Proj": fd_pra if fd_pra is not None else None,
+                "FD Pts": fd["pts"] if fd else None,
+                "FD Reb": fd["reb"] if fd else None,
+                "FD Ast": fd["ast"] if fd else None,
+                "FD Min": fd["min"] if fd else None,
+                "RS Avg": rs_avg,
+                "PO Avg": playoff_avg,
+                "Ext Proj": ext_pra,
+                "Series Win%": round(series_win_prob, 3),
+                "series_win_prob_raw": series_win_prob,
+                "series_lose_prob_raw": round(1.0 - series_win_prob, 3),
+                "Urgency": pred_urgency,
+                "Urgency_Ours": urgency_ours,
+                "Urgency_DE": urgency_de,
+                "Urgency_FD": urgency_fd,
+                "Exp Games": proj["expected_future_games"],
+                "Picked": pid in used_ids,
+                "game_id": game["game_id"],
+                "Inj Note": inj_comment if inj_comment else None,
+                "Signals": signals_text,
+                "is_home": is_home,
+                "team_wins": series_record["wins"],
+                "team_losses": series_record["losses"],
+                "_proj": proj,
+            })
 
     df = pd.DataFrame(rows)
     if df.empty:
@@ -327,19 +341,43 @@ def build_todays_player_df(game_date: str | None = None, current_round: int = 1)
 # inline to embed today's tab in the main DOM (avoids dynamic layout race conditions).
 def _today_layout():
     return html.Div([
-        # ── Schedule strip (always visible) ────────────────────────────
-        dcc.Loading(
-            html.Div(id="schedule-strip", className="mb-2"),
-            type="circle", color="#0071e3", id="schedule-loading",
-            delay_show=0, style={"minHeight": "60px"},
-        ),
-
         # ── Sub-tabs ────────────────────────────────────────────────────
         dbc.Tabs(id="today-subtabs", active_tab="subtab-players", className="mt-1", children=[
             dbc.Tab(label="Browse Players", tab_id="subtab-players"),
             dbc.Tab(label="Player Scatter", tab_id="subtab-scatter"),
             dbc.Tab(label="Compare Players", tab_id="subtab-compare"),
         ]),
+
+        # ── Date picker row ──────────────────────────────────────────────
+        dbc.Row([
+            dbc.Col([
+                dcc.DatePickerSingle(
+                    id="game-date-picker",
+                    date=None,
+                    display_format="MMM D, YYYY",
+                    disabled_days=_compute_disabled_days(),
+                    style={"fontSize": "14px"},
+                ),
+                html.Span(id="last-updated-text",
+                          style={"fontSize": "12px", "color": "#6e6e73", "marginLeft": "10px"}),
+                dcc.Loading(
+                    html.Div(style={"width": "28px", "height": "28px"}),
+                    id="header-data-loading",
+                    target_components={"loading-sentinel": "children"},
+                    type="circle", color="#0071e3",
+                    delay_show=0,
+                    style={"display": "inline-block", "verticalAlign": "middle",
+                           "marginLeft": "10px", "width": "28px", "height": "28px"},
+                ),
+            ], width="auto", className="d-flex align-items-center"),
+        ], className="mt-2 mb-1"),
+
+        # ── Schedule strip ───────────────────────────────────────────────
+        dcc.Loading(
+            html.Div(id="schedule-strip", className="mb-2"),
+            type="circle", color="#0071e3", id="schedule-loading",
+            delay_show=0, style={"minHeight": "60px"},
+        ),
 
         # ── Browse Players subtab ────────────────────────────────────────
         html.Div(id="subtab-players-pane", className="mt-3", children=[
@@ -558,27 +596,6 @@ app.layout = dbc.Container(
             dbc.Col(html.H4("🏀 Drive to the Finals",
                             style={"fontWeight": "700", "letterSpacing": "-0.5px", "margin": "0"}),
                     width="auto", className="d-flex align-items-center"),
-            dbc.Col([
-                dcc.DatePickerSingle(
-                    id="game-date-picker",
-                    date=None,
-                    display_format="MMM D, YYYY",
-                    disabled_days=_compute_disabled_days(),
-                    style={"fontSize": "14px"},
-                ),
-                html.Span(id="last-updated-text",
-                          style={"fontSize": "12px", "color": "#6e6e73", "marginLeft": "10px"}),
-                # Spinner that fires while today-data-store is loading (date change etc.)
-                dcc.Loading(
-                    html.Div(style={"width": "28px", "height": "28px"}),
-                    id="header-data-loading",
-                    target_components={"loading-sentinel": "children"},
-                    type="circle", color="#0071e3",
-                    delay_show=0,
-                    style={"display": "inline-block", "verticalAlign": "middle",
-                           "marginLeft": "10px", "width": "28px", "height": "28px"},
-                ),
-            ], width="auto", className="d-flex align-items-center"),
             dbc.Col([
                 dbc.Button("Clear Cache", id="clear-cache-btn", color="light", size="sm", className="me-1"),
                 html.Span(id="cache-status", className="text-muted small ms-2"),
@@ -917,7 +934,36 @@ def load_and_render_today(tab, _, game_date, _load_trigger, urgency_field):
     print(f"[dashboard] built {len(df)} rows", flush=True)
     available = [c for c in _DISPLAY_COLS if c in df.columns]
     store = {"rows": df[available].to_dict("records"), "game_date": game_date}
+
+    # Pre-warm cache for adjacent game dates in the background.
+    effective_date = game_date or date.today().isoformat()
+    import threading
+    threading.Thread(target=_prefetch_adjacent_dates, args=(effective_date,), daemon=True).start()
+
     return _render_table_from_store(store, urgency_field), store, game_date
+
+
+def _prefetch_adjacent_dates(current_date: str) -> None:
+    known = db_get_known_game_dates()
+    if not known or current_date not in known:
+        return
+    idx = known.index(current_date)
+    adjacent = []
+    if idx > 0:
+        adjacent.append(known[idx - 1])
+    if idx < len(known) - 1:
+        adjacent.append(known[idx + 1])
+    for d in adjacent:
+        cache_key = f"{d}_1"
+        if cache_key in _df_cache:
+            _, ts = _df_cache[cache_key]
+            if time.time() - ts < 3600:
+                continue
+        try:
+            print(f"[prefetch] warming cache for {d}", flush=True)
+            build_todays_player_df(game_date=d)
+        except Exception as e:
+            print(f"[prefetch] {d} failed: {e}", flush=True)
 
 
 @app.callback(
