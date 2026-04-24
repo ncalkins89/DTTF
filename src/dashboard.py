@@ -489,9 +489,11 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Ar
 .date-chip-day { font-size:10px; font-weight:500; color:#8e8e93; letter-spacing:0.6px; text-transform:uppercase; line-height:1.5; white-space:nowrap; }
 .date-chip-num { font-size:14px; font-weight:600; color:#1d1d1f; line-height:1.3; white-space:nowrap; }
 /* Hide the date picker text input — show only the calendar popup */
-#date-picker-wrapper .SingleDatePickerInput__withBorder { border:none !important; background:transparent !important; }
-#date-picker-wrapper input.DateInput_input { opacity:0; height:1px; padding:0; margin:0; min-width:0; width:1px; position:absolute; }
-#date-picker-wrapper .DateInput { width:1px; overflow:hidden; }
+#date-picker-wrapper .SingleDatePicker { position:static !important; }
+#date-picker-wrapper .SingleDatePickerInput { background:transparent !important; border:none !important; padding:0 !important; height:0 !important; overflow:hidden !important; display:block !important; }
+#date-picker-wrapper .SingleDatePickerInput__withBorder { border:none !important; }
+#date-picker-wrapper .DateInput { width:0 !important; height:0 !important; overflow:hidden !important; padding:0 !important; }
+#date-picker-wrapper input.DateInput_input { opacity:0 !important; width:1px !important; height:1px !important; padding:0 !important; margin:0 !important; min-width:0 !important; position:absolute !important; }
 #date-picker-wrapper .SingleDatePickerInput_calendarIcon { display:none !important; }
 .ag-header-group-cell-label { justify-content: center !important; font-weight: 600; color: #1d1d1f; }
 .ag-theme-alpine .ag-cell { padding-left: 8px !important; padding-right: 8px !important; }
@@ -701,9 +703,32 @@ def render_schedule_strip(store_data, _sentinel):
         else:
             away_w, away_l = home_l, home_w  # fallback
 
-        # Standings include today's result for past dates, so don't add 1.
         is_past = game_date and str(game_date)[:10] < date.today().isoformat()
-        game_num = home_w + away_w if is_past else home_w + away_w + 1
+        if is_past:
+            game_num = home_w + away_w
+        else:
+            # Count series games scheduled strictly between today and this date
+            # to find the correct future game number.
+            from src.db import _conn as _db_conn
+            today_iso = date.today().isoformat()
+            gd_iso = str(game_date)[:10]
+            with _db_conn() as cx:
+                sched_row = cx.execute(
+                    "SELECT home_team_id, away_team_id FROM schedule WHERE game_id = ?",
+                    (gid,),
+                ).fetchone()
+                intervening = 0
+                if sched_row and gd_iso > today_iso:
+                    intervening = cx.execute(
+                        """SELECT COUNT(*) FROM schedule
+                           WHERE game_date > ? AND game_date < ?
+                           AND ((home_team_id=? AND away_team_id=?)
+                                OR (home_team_id=? AND away_team_id=?))""",
+                        (today_iso, gd_iso,
+                         sched_row["home_team_id"], sched_row["away_team_id"],
+                         sched_row["away_team_id"], sched_row["home_team_id"]),
+                    ).fetchone()[0]
+            game_num = home_w + away_w + intervening + 1
         chips.append(html.Div([
             html.Div(f"Game {game_num}",
                      style={"fontSize": "10px", "color": "#aaa", "marginBottom": "2px", "textTransform": "uppercase", "letterSpacing": "0.5px"}),
@@ -862,8 +887,8 @@ def toggle_calendar(cal_clicks, _date_selected, current_style):
     # Toggle on calendar icon click
     is_hidden = not current_style or current_style.get("pointerEvents") == "none"
     if is_hidden:
-        return {"position": "absolute", "top": "44px", "left": "0",
-                "zIndex": "1000", "background": "#fff"}
+        # No background — only the calendar popup (which has its own background) should show
+        return {"position": "absolute", "top": "44px", "left": "0", "zIndex": "1000"}
     return {"position": "absolute", "top": "44px", "left": "0",
             "opacity": "0", "pointerEvents": "none", "height": "0",
             "overflow": "visible", "zIndex": "1000"}
