@@ -331,7 +331,6 @@ def _today_layout():
         dcc.Loading(
             html.Div(id="schedule-strip", className="mb-2"),
             type="circle", color="#0071e3", id="schedule-loading",
-            target_components={"loading-sentinel": "children"},
             delay_show=0, style={"minHeight": "60px"},
         ),
 
@@ -376,7 +375,6 @@ def _today_layout():
                 dcc.Loading(
                     dcc.Graph(id="scatter-chart", config={"displayModeBar": True}),
                     type="circle", color="#0071e3", delay_show=0,
-                    target_components={"loading-sentinel": "children"},
                 ),
             ]), className="mt-3"),
         ]),
@@ -613,8 +611,9 @@ app.layout = dbc.Container(
     Output("schedule-strip", "children"),
     Input("today-data-store", "data"),
     Input("game-date-picker", "date"),
+    Input("loading-sentinel", "children"),
 )
-def render_schedule_strip(store_data, game_date):
+def render_schedule_strip(store_data, game_date, _sentinel):
     if not store_data or not store_data.get("rows"):
         return []
     df = pd.DataFrame(store_data["rows"])
@@ -1129,8 +1128,9 @@ def patch_and_rerender_picks(_, store_data, urgency_field):
 @app.callback(
     Output("scatter-chart", "figure"),
     Input("today-data-store", "data"),
+    Input("loading-sentinel", "children"),
 )
-def update_scatter_chart(store_data):
+def update_scatter_chart(store_data, _sentinel):
     empty = go.Figure()
     empty.update_layout(template="plotly_white", height=480)
     if not store_data or not store_data.get("rows"):
