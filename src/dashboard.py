@@ -350,66 +350,54 @@ def _today_layout():
         ]),
 
         # ── Date strip (NBA scoreboard style) ───────────────────────────
-        html.Div([
-            # Hidden real date picker — opened by the calendar icon
+        # Store tracking the week offset (0 = week containing today)
+        dcc.Store(id="date-strip-offset", data=0),
+        html.Div(style={"position": "relative"}, children=[
+            # Real date picker — always rendered, zero-size, positioned so its
+            # calendar popup floats naturally. JS clicks it when the 🗓 icon is pressed.
             html.Div(
                 dcc.DatePickerSingle(
                     id="game-date-picker",
                     date=None,
                     display_format="MMM D, YYYY",
                     disabled_days=_compute_disabled_days(),
+                    with_portal=False,
                 ),
                 id="date-picker-wrapper",
-                style={"display": "none"},
+                style={"position": "absolute", "top": "44px", "left": "0",
+                       "opacity": "0", "pointerEvents": "none", "height": "0",
+                       "overflow": "visible", "zIndex": "1000"},
             ),
-            dbc.Row([
-                # Left arrow
-                dbc.Col(
-                    html.Button("‹", id="date-prev-btn",
-                                style={"background": "none", "border": "none", "fontSize": "22px",
-                                       "color": "#0071e3", "cursor": "pointer", "padding": "0 10px",
-                                       "lineHeight": "1"}),
-                    width="auto", className="d-flex align-items-center",
+            # Strip row: ‹ [chips] › 🗓  |  spinner  updated-text
+            html.Div([
+                html.Button("‹", id="date-prev-btn", className="date-nav-btn"),
+                html.Div(id="date-strip-chips",
+                         style={"display": "flex", "gap": "2px", "alignItems": "center"}),
+                html.Button("›", id="date-next-btn", className="date-nav-btn"),
+                html.Button("🗓", id="date-cal-btn", className="date-nav-btn",
+                            style={"fontSize": "17px", "marginLeft": "4px", "opacity": "0.65"}),
+                # Divider
+                html.Div(style={"width": "1px", "height": "24px", "background": "#d2d2d7",
+                                "margin": "0 10px"}),
+                dcc.Loading(
+                    html.Div(style={"width": "20px", "height": "20px"}),
+                    id="header-data-loading",
+                    target_components={"loading-sentinel": "children"},
+                    type="circle", color="#0071e3", delay_show=0,
+                    style={"display": "inline-block", "verticalAlign": "middle",
+                           "width": "20px", "height": "20px"},
                 ),
-                # Day chips
-                dbc.Col(
-                    html.Div(id="date-strip-chips",
-                             style={"display": "flex", "gap": "2px", "alignItems": "center"}),
-                    className="d-flex align-items-center px-0",
-                ),
-                # Right arrow
-                dbc.Col(
-                    html.Button("›", id="date-next-btn",
-                                style={"background": "none", "border": "none", "fontSize": "22px",
-                                       "color": "#0071e3", "cursor": "pointer", "padding": "0 10px",
-                                       "lineHeight": "1"}),
-                    width="auto", className="d-flex align-items-center",
-                ),
-                # Calendar icon
-                dbc.Col(
-                    html.Button("🗓", id="date-cal-btn",
-                                style={"background": "none", "border": "none", "fontSize": "18px",
-                                       "cursor": "pointer", "padding": "0 6px", "opacity": "0.6"}),
-                    width="auto", className="d-flex align-items-center",
-                ),
-                # Spinner + last-updated inline
-                dbc.Col([
-                    dcc.Loading(
-                        html.Div(style={"width": "22px", "height": "22px"}),
-                        id="header-data-loading",
-                        target_components={"loading-sentinel": "children"},
-                        type="circle", color="#0071e3", delay_show=0,
-                        style={"display": "inline-block", "verticalAlign": "middle",
-                               "width": "22px", "height": "22px"},
-                    ),
-                    html.Span(id="last-updated-text",
-                              style={"fontSize": "11px", "color": "#8e8e93", "marginLeft": "6px"}),
-                ], width="auto", className="d-flex align-items-center ms-2"),
-            ], className="g-0 align-items-center"),
-        ], className="mt-2 mb-2",
-           style={"background": "#f5f5f7", "borderRadius": "10px", "padding": "6px 8px"}),
-        # Store tracking the week offset (0 = week containing today)
-        dcc.Store(id="date-strip-offset", data=0),
+                html.Span(id="last-updated-text",
+                          style={"fontSize": "11px", "color": "#8e8e93", "marginLeft": "6px"}),
+            ], style={"display": "flex", "alignItems": "center", "gap": "0",
+                      "background": "#f5f5f7", "borderRadius": "10px",
+                      "padding": "4px 8px", "width": "fit-content"}),
+        ]),
+
+        # ── Selected date label ──────────────────────────────────────────
+        html.Div(id="selected-date-label",
+                 style={"fontSize": "13px", "color": "#6e6e73", "marginTop": "8px",
+                        "marginBottom": "4px", "fontWeight": "500"}),
 
         # ── Schedule strip ───────────────────────────────────────────────
         dcc.Loading(
@@ -494,12 +482,15 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Ar
 .btn-sm { border-radius: 8px; font-size: 13px; }
 .form-control, .form-select { border-radius: 8px; border-color: #d2d2d7; font-size: 13px; }
 .schedule-chip { display:inline-block; background:#fff; border:1px solid #d2d2d7; border-radius:10px; padding:8px 14px; margin:3px; font-size:12px; box-shadow:0 1px 3px rgba(0,0,0,.06); }
-.date-chip { display:inline-flex; flex-direction:column; align-items:center; padding:5px 10px; border-radius:8px; cursor:pointer; min-width:48px; transition:background 0.12s; user-select:none; }
-.date-chip:hover { background:#e5e5ea; }
-.date-chip.active { background:#0071e3 !important; color:#fff !important; }
-.date-chip.active .date-chip-day, .date-chip.active .date-chip-num { color:#fff !important; }
-.date-chip.no-game { opacity:0.35; cursor:default; }
-.date-chip-day { font-size:10px; font-weight:500; color:#8e8e93; letter-spacing:0.5px; text-transform:uppercase; }
+.date-nav-btn { background:none; border:none; font-size:22px; color:#0071e3; cursor:pointer; padding:0 8px; line-height:1; }
+.date-nav-btn:hover { color:#0051a8; }
+.date-chip { display:inline-flex; flex-direction:column; align-items:center; padding:6px 11px; border-radius:8px; cursor:pointer; min-width:52px; transition:background 0.12s; user-select:none; }
+.date-chip:hover:not(.no-game) { background:#e5e5ea; }
+.date-chip.active { background:transparent !important; }
+.date-chip.active .date-chip-day { color:#6e6e73; font-weight:600; }
+.date-chip.active .date-chip-num { color:#1d1d1f; font-weight:800; font-size:18px; }
+.date-chip.no-game { opacity:0.3; cursor:default; }
+.date-chip-day { font-size:10px; font-weight:500; color:#8e8e93; letter-spacing:0.6px; text-transform:uppercase; line-height:1.4; }
 .date-chip-num { font-size:15px; font-weight:600; color:#1d1d1f; line-height:1.2; }
 .ag-header-group-cell-label { justify-content: center !important; font-weight: 600; color: #1d1d1f; }
 .ag-theme-alpine .ag-cell { padding-left: 8px !important; padding-right: 8px !important; }
@@ -820,15 +811,42 @@ def chip_date_click(n_clicks_list, id_list, offset):
 
 
 @app.callback(
-    Output("date-picker-wrapper", "style"),
+    Output("selected-date-label", "children"),
+    Input("game-date-picker", "date"),
+)
+def update_date_label(game_date):
+    if not game_date:
+        return ""
+    try:
+        d = date.fromisoformat(str(game_date)[:10])
+        return d.strftime("%A, %B %-d, %Y")
+    except Exception:
+        return ""
+
+
+# Calendar icon: make the invisible picker pointer-events live, then JS-click its button.
+app.clientside_callback(
+    """
+    function(n_clicks) {
+        if (!n_clicks) return window.dash_clientside.no_update;
+        var wrapper = document.getElementById('date-picker-wrapper');
+        if (!wrapper) return window.dash_clientside.no_update;
+        // Briefly restore pointer events so the popup can open
+        wrapper.style.pointerEvents = 'auto';
+        // Click the calendar button inside the DatePickerSingle
+        setTimeout(function() {
+            var btn = wrapper.querySelector('button[type="button"]');
+            if (btn) btn.click();
+            // Re-hide after a moment (popup stays open independently)
+            setTimeout(function() { wrapper.style.pointerEvents = 'none'; }, 300);
+        }, 20);
+        return window.dash_clientside.no_update;
+    }
+    """,
+    Output("date-cal-btn", "title"),
     Input("date-cal-btn", "n_clicks"),
-    State("date-picker-wrapper", "style"),
     prevent_initial_call=True,
 )
-def toggle_calendar(n_clicks, current_style):
-    if current_style and current_style.get("display") == "none":
-        return {"display": "block", "position": "absolute", "zIndex": "1000"}
-    return {"display": "none"}
 
 
 @app.callback(
