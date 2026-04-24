@@ -349,29 +349,67 @@ def _today_layout():
             dbc.Tab(label="Compare Players", tab_id="subtab-compare"),
         ]),
 
-        # ── Date picker row ──────────────────────────────────────────────
-        dbc.Row([
-            dbc.Col([
+        # ── Date strip (NBA scoreboard style) ───────────────────────────
+        html.Div([
+            # Hidden real date picker — opened by the calendar icon
+            html.Div(
                 dcc.DatePickerSingle(
                     id="game-date-picker",
                     date=None,
                     display_format="MMM D, YYYY",
                     disabled_days=_compute_disabled_days(),
-                    style={"fontSize": "14px"},
                 ),
-                html.Span(id="last-updated-text",
-                          style={"fontSize": "12px", "color": "#6e6e73", "marginLeft": "10px"}),
-                dcc.Loading(
-                    html.Div(style={"width": "28px", "height": "28px"}),
-                    id="header-data-loading",
-                    target_components={"loading-sentinel": "children"},
-                    type="circle", color="#0071e3",
-                    delay_show=0,
-                    style={"display": "inline-block", "verticalAlign": "middle",
-                           "marginLeft": "10px", "width": "28px", "height": "28px"},
+                id="date-picker-wrapper",
+                style={"display": "none"},
+            ),
+            dbc.Row([
+                # Left arrow
+                dbc.Col(
+                    html.Button("‹", id="date-prev-btn",
+                                style={"background": "none", "border": "none", "fontSize": "22px",
+                                       "color": "#0071e3", "cursor": "pointer", "padding": "0 10px",
+                                       "lineHeight": "1"}),
+                    width="auto", className="d-flex align-items-center",
                 ),
-            ], width="auto", className="d-flex align-items-center"),
-        ], className="mt-2 mb-1"),
+                # Day chips
+                dbc.Col(
+                    html.Div(id="date-strip-chips",
+                             style={"display": "flex", "gap": "2px", "alignItems": "center"}),
+                    className="d-flex align-items-center px-0",
+                ),
+                # Right arrow
+                dbc.Col(
+                    html.Button("›", id="date-next-btn",
+                                style={"background": "none", "border": "none", "fontSize": "22px",
+                                       "color": "#0071e3", "cursor": "pointer", "padding": "0 10px",
+                                       "lineHeight": "1"}),
+                    width="auto", className="d-flex align-items-center",
+                ),
+                # Calendar icon
+                dbc.Col(
+                    html.Button("🗓", id="date-cal-btn",
+                                style={"background": "none", "border": "none", "fontSize": "18px",
+                                       "cursor": "pointer", "padding": "0 6px", "opacity": "0.6"}),
+                    width="auto", className="d-flex align-items-center",
+                ),
+                # Spinner + last-updated inline
+                dbc.Col([
+                    dcc.Loading(
+                        html.Div(style={"width": "22px", "height": "22px"}),
+                        id="header-data-loading",
+                        target_components={"loading-sentinel": "children"},
+                        type="circle", color="#0071e3", delay_show=0,
+                        style={"display": "inline-block", "verticalAlign": "middle",
+                               "width": "22px", "height": "22px"},
+                    ),
+                    html.Span(id="last-updated-text",
+                              style={"fontSize": "11px", "color": "#8e8e93", "marginLeft": "6px"}),
+                ], width="auto", className="d-flex align-items-center ms-2"),
+            ], className="g-0 align-items-center"),
+        ], className="mt-2 mb-2",
+           style={"background": "#f5f5f7", "borderRadius": "10px", "padding": "6px 8px"}),
+        # Store tracking the week offset (0 = week containing today)
+        dcc.Store(id="date-strip-offset", data=0),
 
         # ── Schedule strip ───────────────────────────────────────────────
         dcc.Loading(
@@ -408,19 +446,12 @@ def _today_layout():
         # ── Player Scatter subtab ────────────────────────────────────────
         html.Div(id="subtab-scatter-pane", className="mt-3", style={"display": "none"}, children=[
             dbc.Card(dbc.CardBody([
-                dbc.Row([
-                    dbc.Col([
-                        html.P("Urgency vs. Projected PRA",
-                               className="fw-semibold mb-0", style={"fontSize": "13px"}),
-                        html.P("Top-right = pick now.  Top-left = save for later.",
-                               className="text-muted mb-2", style={"fontSize": "12px"}),
-                    ]),
-                ]),
                 dcc.Loading(
-                    dcc.Graph(id="scatter-chart", config={"displayModeBar": True}),
-                    type="circle", color="#0071e3", delay_show=0,
+                    dcc.Graph(id="scatter-chart", config={"displayModeBar": True},
+                              style={"height": "420px"}),
+                    type="circle", color="#0071e3", delay_show=0, style={"minHeight": "420px"},
                 ),
-            ])),
+            ], style={"padding": "10px 12px"})),
         ]),
 
         # ── Compare Players subtab ───────────────────────────────────────
@@ -462,7 +493,14 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Ar
 .card { border: none; border-radius: 12px; box-shadow: 0 1px 4px rgba(0,0,0,.08); }
 .btn-sm { border-radius: 8px; font-size: 13px; }
 .form-control, .form-select { border-radius: 8px; border-color: #d2d2d7; font-size: 13px; }
-.schedule-chip { display:inline-block; background:#fff; border:1px solid #d2d2d7; border-radius:10px; padding:10px 16px; margin:4px; font-size:13px; box-shadow:0 1px 3px rgba(0,0,0,.06); }
+.schedule-chip { display:inline-block; background:#fff; border:1px solid #d2d2d7; border-radius:10px; padding:8px 14px; margin:3px; font-size:12px; box-shadow:0 1px 3px rgba(0,0,0,.06); }
+.date-chip { display:inline-flex; flex-direction:column; align-items:center; padding:5px 10px; border-radius:8px; cursor:pointer; min-width:48px; transition:background 0.12s; user-select:none; }
+.date-chip:hover { background:#e5e5ea; }
+.date-chip.active { background:#0071e3 !important; color:#fff !important; }
+.date-chip.active .date-chip-day, .date-chip.active .date-chip-num { color:#fff !important; }
+.date-chip.no-game { opacity:0.35; cursor:default; }
+.date-chip-day { font-size:10px; font-weight:500; color:#8e8e93; letter-spacing:0.5px; text-transform:uppercase; }
+.date-chip-num { font-size:15px; font-weight:600; color:#1d1d1f; line-height:1.2; }
 .ag-header-group-cell-label { justify-content: center !important; font-weight: 600; color: #1d1d1f; }
 .ag-theme-alpine .ag-cell { padding-left: 8px !important; padding-right: 8px !important; }
 .ag-theme-alpine .ag-header-cell { padding-left: 8px !important; padding-right: 8px !important; }
@@ -695,6 +733,102 @@ def render_schedule_strip(store_data, _sentinel):
 )
 def init_date_picker(_):
     return date.today().isoformat()
+
+
+# ── Date strip: render chips & handle navigation ─────────────────────────────
+
+@app.callback(
+    Output("date-strip-offset", "data"),
+    Input("date-prev-btn", "n_clicks"),
+    Input("date-next-btn", "n_clicks"),
+    State("date-strip-offset", "data"),
+    prevent_initial_call=True,
+)
+def shift_date_strip(prev_clicks, next_clicks, offset):
+    triggered = callback_context.triggered_id
+    if triggered == "date-prev-btn":
+        return (offset or 0) - 7
+    return (offset or 0) + 7
+
+
+@app.callback(
+    Output("date-strip-chips", "children"),
+    Input("date-strip-offset", "data"),
+    Input("game-date-picker", "date"),
+)
+def render_date_strip(offset, selected_date):
+    from datetime import timedelta
+    offset = offset or 0
+    today = date.today()
+    selected = date.fromisoformat(str(selected_date)[:10]) if selected_date else today
+
+    # Anchor week so that the selected date is always visible
+    # Week starts on Monday of the week containing (today + offset days)
+    anchor = today + timedelta(days=offset)
+    week_start = anchor - timedelta(days=anchor.weekday())  # Monday
+
+    game_dates = set(db_get_known_game_dates())
+    chips = []
+    for i in range(7):
+        d = week_start + timedelta(days=i)
+        d_iso = d.isoformat()
+        is_active = d == selected
+        has_game = d_iso in game_dates
+        cls = "date-chip"
+        if is_active:
+            cls += " active"
+        if not has_game:
+            cls += " no-game"
+        chips.append(
+            html.Div(
+                [
+                    html.Div(d.strftime("%a").upper(), className="date-chip-day"),
+                    html.Div(str(d.day), className="date-chip-num"),
+                ],
+                className=cls,
+                id={"type": "date-chip", "date": d_iso},
+                n_clicks=0 if has_game else None,
+            )
+        )
+    return chips
+
+
+@app.callback(
+    Output("game-date-picker", "date", allow_duplicate=True),
+    Output("date-strip-offset", "data", allow_duplicate=True),
+    Input({"type": "date-chip", "date": dash.ALL}, "n_clicks"),
+    State({"type": "date-chip", "date": dash.ALL}, "id"),
+    State("date-strip-offset", "data"),
+    prevent_initial_call=True,
+)
+def chip_date_click(n_clicks_list, id_list, offset):
+    from datetime import timedelta
+    if not any(n for n in (n_clicks_list or []) if n):
+        return dash.no_update, dash.no_update
+    triggered = callback_context.triggered_id
+    if not triggered or not isinstance(triggered, dict):
+        return dash.no_update, dash.no_update
+    clicked_date = triggered["date"]
+    # Recentre the strip on the clicked date
+    today = date.today()
+    d = date.fromisoformat(clicked_date)
+    new_offset = (d - today).days
+    # Snap offset to nearest week start
+    anchor = today + timedelta(days=new_offset)
+    new_offset = (anchor - timedelta(days=anchor.weekday()) - (today - timedelta(days=today.weekday()))).days
+    return clicked_date, new_offset
+
+
+@app.callback(
+    Output("date-picker-wrapper", "style"),
+    Input("date-cal-btn", "n_clicks"),
+    State("date-picker-wrapper", "style"),
+    prevent_initial_call=True,
+)
+def toggle_calendar(n_clicks, current_style):
+    if current_style and current_style.get("display") == "none":
+        return {"display": "block", "position": "absolute", "zIndex": "1000"}
+    return {"display": "none"}
 
 
 @app.callback(
@@ -1256,11 +1390,11 @@ def update_scatter_chart(store_data, _sentinel):
                 mode="markers+text",
                 name=team,
                 legendgroup=team,
-                marker=dict(color=color, size=11, opacity=0.9,
+                marker=dict(color=color, size=14, opacity=0.9,
                             line=dict(color="#111", width=1)),
                 text=labels,
                 textposition="top center",
-                textfont=dict(size=10, color=color),
+                textfont=dict(size=12, color=color),
                 hovertemplate=(
                     "<b>%{customdata[0]}</b><br>"
                     "%{customdata[1]} vs %{customdata[2]}<br>"
@@ -1331,21 +1465,23 @@ def update_scatter_chart(store_data, _sentinel):
 
     fig.update_layout(
         template="plotly_white",
-        height=500,
+        height=420,
         xaxis=dict(
-            title="Series Elimination Probability",
+            title=dict(text="Series Elimination Probability", font=dict(size=13)),
             tickformat=".0%",
+            tickfont=dict(size=12),
             range=[-0.02, 1.02],
             gridcolor="#f0f0f0",
         ),
         yaxis=dict(
-            title="Pred (PRA)",
+            title=dict(text="Pred PRA", font=dict(size=13)),
+            tickfont=dict(size=12),
             gridcolor="#f0f0f0",
         ),
         legend=dict(
             orientation="v",
             x=1.01, y=1,
-            font=dict(size=11),
+            font=dict(size=12),
             itemsizing="constant",
         ),
         margin=dict(l=50, r=140, t=20, b=50),
