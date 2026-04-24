@@ -158,6 +158,7 @@ def project_player(
     expected_margin: float | None = None,
     decay_rate: float = 0.82,
     current_round: int = 1,
+    include_rolling: bool = False,
 ) -> dict:
     base_pra = compute_base_pra(game_logs, decay_rate)
 
@@ -179,11 +180,18 @@ def project_player(
     total_games = compute_total_expected_games(wins, losses, per_game_win_prob, current_round)
     urgency = compute_urgency(after_spread_adj, series_win_prob)
 
-    decay_weights = (
-        compute_decay_weights(game_logs["GAME_DATE"].tolist(), decay_rate)
-        if not game_logs.empty else np.array([])
-    )
-    rolling_preds = compute_rolling_predictions(game_logs, decay_rate) if not game_logs.empty else []
+    if include_rolling and not game_logs.empty:
+        decay_weights = compute_decay_weights(game_logs["GAME_DATE"].tolist(), decay_rate)
+        rolling_preds = compute_rolling_predictions(game_logs, decay_rate)
+        game_dates = game_logs["GAME_DATE"].tolist()
+        per_game_pra = game_logs["PRA"].tolist()
+        per_game_season_type = game_logs["SEASON_TYPE"].tolist()
+    else:
+        decay_weights = np.array([])
+        rolling_preds = []
+        game_dates = []
+        per_game_pra = []
+        per_game_season_type = []
 
     return {
         "player_id": player_id,
@@ -198,10 +206,9 @@ def project_player(
         "series_win_prob": round(series_win_prob, 3),
         "expected_future_games": round(total_games, 1),
         "games_used": len(game_logs),
-        # For visualization
-        "game_dates": game_logs["GAME_DATE"].tolist() if not game_logs.empty else [],
-        "per_game_pra": game_logs["PRA"].tolist() if not game_logs.empty else [],
-        "per_game_season_type": game_logs["SEASON_TYPE"].tolist() if not game_logs.empty else [],
+        "game_dates": game_dates,
+        "per_game_pra": per_game_pra,
+        "per_game_season_type": per_game_season_type,
         "decay_weights": decay_weights.tolist() if hasattr(decay_weights, "tolist") else list(decay_weights),
         "rolling_predictions": rolling_preds,
     }

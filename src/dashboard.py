@@ -1495,6 +1495,7 @@ def update_model_charts(player_id, decay_rate, tab):
         per_game_win_prob=per_game_win_prob,
         decay_rate=decay_rate,
         current_round=int(current_round or 1),
+        include_rolling=True,
     )
 
     weights = proj["decay_weights"]
