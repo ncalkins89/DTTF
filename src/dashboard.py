@@ -27,6 +27,7 @@ from src.data_fetcher import (
     clear_cache,
     get_active_roster,
     get_player_game_logs,
+    get_player_game_logs_365,
     get_series_standings,
     get_team_defense_ratings,
     get_todays_games,
