@@ -29,8 +29,11 @@ from src.db import (
     upsert_de_projections,
     upsert_fd_projections,
     upsert_injuries,
+    upsert_model_projections,
     get_game_logs,
     get_def_ratings,
+    get_de_projections,
+    get_fd_projections,
 )
 
 
@@ -238,6 +241,98 @@ def update_prior_season_logs(prior_season: str) -> None:
     print(f"  Done — {fetched} fetched, {skipped} skipped (fresh), {len(seen)} total.")
 
 
+def update_model_projections_snapshot(game_date: str, games: list[dict], season: str) -> None:
+    """
+    Snapshot every player's projections for today into model_projections.
+    Idempotent — INSERT OR REPLACE means re-running just overwrites.
+    Runs after game logs, DE, and FD are all loaded so projections are complete.
+    """
+    _step(10, f"Model projections snapshot — {game_date}")
+    if not games:
+        print("  No games — skipping.")
+        return
+
+    from src.data_fetcher import (
+        get_active_roster, get_player_game_logs_365,
+        get_team_defense_ratings, get_series_standings,
+    )
+    from src.projections import project_player
+    from src.db import (
+        get_series_standings as db_get_series_standings,
+        get_latest_odds as db_get_latest_odds,
+    )
+    from src.odds import fetch_series_win_probs, get_series_record_for_team
+    from nba_api.stats.static import teams as nba_teams
+
+    TEAM_MAP = {t["id"]: t["abbreviation"] for t in nba_teams.get_teams()}
+
+    def_ratings = get_team_defense_ratings()
+    series_standings = db_get_series_standings(season) or get_series_standings(season)
+    per_game_probs = db_get_latest_odds()
+    series_win_probs = fetch_series_win_probs(series_standings, per_game_probs)
+    de_projs = get_de_projections(game_date)
+    fd_projs = get_fd_projections(game_date)
+
+    rows = []
+    seen: set[int] = set()
+    for game in games:
+        for team_id, opp_team_id, team_abbr, opp_abbr in [
+            (game["home_team_id"], game["away_team_id"],
+             game["home_team_abbr"], game["away_team_abbr"]),
+            (game["away_team_id"], game["home_team_id"],
+             game["away_team_abbr"], game["home_team_abbr"]),
+        ]:
+            series_record = get_series_record_for_team(team_abbr, series_standings, TEAM_MAP)
+            per_game_p = per_game_probs.get(team_abbr, 0.5)
+            series_win_prob = series_win_probs.get(team_abbr, 0.5)
+
+            for player in get_active_roster(team_id):
+                pid = player["player_id"]
+                if pid in seen:
+                    continue
+                seen.add(pid)
+
+                logs = get_player_game_logs_365(pid)
+                proj = project_player(
+                    player_id=pid,
+                    opponent_team_id=opp_team_id,
+                    game_logs=logs,
+                    def_ratings=def_ratings,
+                    series_record=series_record,
+                    per_game_win_prob=per_game_p,
+                    current_round=1,
+                )
+                our_proj = proj["projected_pra"]
+                de = de_projs.get(pid)
+                fd = fd_projs.get(pid)
+                de_pra = de["pra"] if de else None
+                fd_pra = fd["pra"] if fd else None
+
+                pl_avg = None
+                if not logs.empty:
+                    pl = logs[logs["SEASON_TYPE"] == "Playoffs"]
+                    if not pl.empty:
+                        pl_avg = round(pl["PRA"].mean(), 1)
+
+                sources = [p for p in [our_proj, de_pra, fd_pra, pl_avg] if p is not None]
+                pred_blended = round(sum(sources) / len(sources), 1) if sources else our_proj
+
+                rows.append({
+                    "player_id": pid,
+                    "player_name": player["player_name"],
+                    "team_abbr": team_abbr,
+                    "opp_abbr": opp_abbr,
+                    "our_proj": our_proj,
+                    "pred_blended": pred_blended,
+                    "de_proj": de_pra,
+                    "fd_proj": fd_pra,
+                    "series_win_prob": series_win_prob,
+                })
+
+    upsert_model_projections(game_date, rows)
+    print(f"  Saved {len(rows)} player projections.")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Bring dttf.db up to date.")
     parser.add_argument("--date", default=date.today().isoformat(),
@@ -268,6 +363,12 @@ def main() -> None:
     else:
         update_game_logs(games, CURRENT_SEASON)
         update_prior_season_logs(PRIOR_SEASON)
+
+    # Step 10 runs after logs+projections are all loaded — snapshot must be last
+    if not args.skip_logs and games:
+        update_model_projections_snapshot(args.date, games, CURRENT_SEASON)
+    else:
+        print("\n[10] Model projections snapshot — skipped (no games or --skip-logs)")
 
     print("\n✓ Done. Open the dashboard: python3 src/dashboard.py")
 

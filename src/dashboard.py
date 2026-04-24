@@ -337,10 +337,11 @@ def _today_layout():
         # ── Sub-tabs ────────────────────────────────────────────────────
         dbc.Tabs(id="today-subtabs", active_tab="subtab-players", className="mt-1", children=[
             dbc.Tab(label="Browse Players", tab_id="subtab-players"),
+            dbc.Tab(label="Player Scatter", tab_id="subtab-scatter"),
             dbc.Tab(label="Compare Players", tab_id="subtab-compare"),
         ]),
 
-        # ── Players subtab ──────────────────────────────────────────────
+        # ── Browse Players subtab ────────────────────────────────────────
         html.Div(id="subtab-players-pane", className="mt-3", children=[
             dbc.Row([
                 dbc.Col([
@@ -363,6 +364,10 @@ def _today_layout():
                 type="circle", color="#0071e3", id="table-loading",
                 delay_show=0, style={"minHeight": "500px"},
             ),
+        ]),
+
+        # ── Player Scatter subtab ────────────────────────────────────────
+        html.Div(id="subtab-scatter-pane", className="mt-3", style={"display": "none"}, children=[
             dbc.Card(dbc.CardBody([
                 dbc.Row([
                     dbc.Col([
@@ -376,7 +381,7 @@ def _today_layout():
                     dcc.Graph(id="scatter-chart", config={"displayModeBar": True}),
                     type="circle", color="#0071e3", delay_show=0,
                 ),
-            ]), className="mt-3"),
+            ])),
         ]),
 
         # ── Compare Players subtab ───────────────────────────────────────
@@ -764,6 +769,7 @@ def toggle_history_subtabs(subtab):
 
 @app.callback(
     Output("subtab-players-pane", "style"),
+    Output("subtab-scatter-pane", "style"),
     Output("subtab-compare-pane", "style"),
     Input("today-subtabs", "active_tab"),
 )
@@ -772,6 +778,7 @@ def toggle_subtabs(subtab):
     hide = {"display": "none"}
     return (
         show if subtab == "subtab-players" else hide,
+        show if subtab == "subtab-scatter" else hide,
         show if subtab == "subtab-compare" else hide,
     )
 

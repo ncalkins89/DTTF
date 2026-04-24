@@ -123,6 +123,21 @@ def init_db() -> None:
             fetched_at TEXT NOT NULL,
             PRIMARY KEY (date, team_abbr)
         );
+
+        CREATE TABLE IF NOT EXISTS model_projections (
+            game_date       TEXT NOT NULL,
+            player_id       INTEGER NOT NULL,
+            player_name     TEXT,
+            team_abbr       TEXT,
+            opp_abbr        TEXT,
+            our_proj        REAL,
+            pred_blended    REAL,
+            de_proj         REAL,
+            fd_proj         REAL,
+            series_win_prob REAL,
+            fetched_at      TEXT NOT NULL,
+            PRIMARY KEY (game_date, player_id)
+        );
         """)
 
 
@@ -513,6 +528,32 @@ def get_injuries() -> dict[str, dict]:
             "SELECT player_name, status, comment FROM injuries"
         ).fetchall()
     return {r["player_name"]: {"status": r["status"], "comment": r["comment"]} for r in rows}
+
+
+def upsert_model_projections(game_date: str, rows: list[dict]) -> None:
+    """Idempotent — re-running overwrites with fresh values. PK=(game_date, player_id)."""
+    now = datetime.utcnow().isoformat()
+    with _conn() as cx:
+        cx.executemany(
+            """INSERT OR REPLACE INTO model_projections
+               (game_date, player_id, player_name, team_abbr, opp_abbr,
+                our_proj, pred_blended, de_proj, fd_proj, series_win_prob, fetched_at)
+               VALUES (:game_date, :player_id, :player_name, :team_abbr, :opp_abbr,
+                       :our_proj, :pred_blended, :de_proj, :fd_proj, :series_win_prob, :fetched_at)""",
+            [{**r, "game_date": game_date, "fetched_at": now} for r in rows],
+        )
+    print(f"[db] upserted {len(rows)} model projections for {game_date}")
+
+
+def get_model_projections(game_date: str) -> list[dict]:
+    with _conn() as cx:
+        rows = cx.execute(
+            """SELECT player_id, player_name, team_abbr, opp_abbr,
+                      our_proj, pred_blended, de_proj, fd_proj, series_win_prob
+               FROM model_projections WHERE game_date = ?""",
+            (game_date,),
+        ).fetchall()
+    return [dict(r) for r in rows]
 
 
 def get_known_game_dates() -> list[str]:
