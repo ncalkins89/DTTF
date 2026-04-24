@@ -610,12 +610,12 @@ app.layout = dbc.Container(
 @app.callback(
     Output("schedule-strip", "children"),
     Input("today-data-store", "data"),
-    Input("game-date-picker", "date"),
     Input("loading-sentinel", "children"),
 )
-def render_schedule_strip(store_data, game_date, _sentinel):
+def render_schedule_strip(store_data, _sentinel):
     if not store_data or not store_data.get("rows"):
         return []
+    game_date = store_data.get("game_date")
     df = pd.DataFrame(store_data["rows"])
 
     def pct_span(p):
@@ -909,7 +909,7 @@ def load_and_render_today(tab, _, game_date, _load_trigger, urgency_field):
         return _render_table_from_store(store, urgency_field), store, game_date
     print(f"[dashboard] built {len(df)} rows", flush=True)
     available = [c for c in _DISPLAY_COLS if c in df.columns]
-    store = {"rows": df[available].to_dict("records")}
+    store = {"rows": df[available].to_dict("records"), "game_date": game_date}
     return _render_table_from_store(store, urgency_field), store, game_date
 
 
@@ -1236,6 +1236,33 @@ def update_scatter_chart(store_data, _sentinel):
                 ),
                 customdata=used[["Player", "Team", "Opp", "Urgency"]].values,
             ))
+
+    # Iso-urgency curves: urgency = Pred × elim_prob → Pred = U / elim_prob
+    _x = np.linspace(0.04, 1.0, 200)
+    for u_level, u_color, u_label in [
+        (5,  "#dc2626", "Urgency 5"),
+        (12, "#ca8a04", "Urgency 12"),
+        (25, "#16a34a", "Urgency 25"),
+    ]:
+        _y = u_level / _x
+        _mask = _y <= 58  # clip to plot area
+        fig.add_trace(go.Scatter(
+            x=_x[_mask], y=_y[_mask],
+            mode="lines",
+            line=dict(color=u_color, width=1, dash="dot"),
+            opacity=0.35,
+            showlegend=False,
+            hoverinfo="skip",
+            name=u_label,
+        ))
+        # Label at right edge of curve where it's still in the plot area
+        _xi = _x[_mask][-1]
+        _yi = min(u_level / _xi, 55)
+        fig.add_annotation(
+            x=_xi, y=_yi, text=str(u_level),
+            showarrow=False, font=dict(size=9, color=u_color), opacity=0.6,
+            xanchor="left",
+        )
 
     # Vertical reference line at 50%
     fig.add_vline(x=0.5, line_dash="dash", line_color="#555", line_width=1)
