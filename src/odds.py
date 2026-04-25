@@ -149,14 +149,11 @@ def fetch_per_game_win_probs(game_date: str | None = None) -> dict[str, float]:
     Fallback: live Odds API fetch when ODDS_API_KEY is set.
     """
     from datetime import date as _date
-    from src.db import get_odds as db_get_odds, get_latest_odds as db_get_latest_odds
+    from src.db import get_odds as db_get_odds
     today = game_date or str(_date.today())
     db_odds = db_get_odds(today)
     if db_odds:
         return db_odds
-    fallback = db_get_latest_odds()
-    if fallback:
-        return fallback
     api_key = os.environ.get("ODDS_API_KEY", "")
     if not api_key:
         return {}

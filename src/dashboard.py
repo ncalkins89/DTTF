@@ -39,13 +39,11 @@ from src.db import (
     init_db,
     get_schedule as db_get_schedule,
     get_odds as db_get_odds,
-    get_latest_odds as db_get_latest_odds,
     get_series_standings as db_get_series_standings,
     get_de_projections as db_get_de_projections,
     get_fd_projections as db_get_fd_projections,
     get_injuries as db_get_injuries,
     get_game_lines as db_get_game_lines,
-    get_latest_game_lines as db_get_latest_game_lines,
     get_last_updated as db_get_last_updated,
     get_known_game_dates as db_get_known_game_dates,
     get_game_logs as db_get_game_logs,
@@ -195,9 +193,7 @@ def build_todays_player_df(game_date: str | None = None, current_round: int = 1)
     injuries = db_get_injuries() or (fetch_injuries() if is_today else {})
 
     from src.odds import fetch_game_lines
-    game_lines = db_get_game_lines(game_date) or (
-        (db_get_latest_game_lines() or fetch_game_lines()) if is_today else {}
-    )
+    game_lines = db_get_game_lines(game_date) or (fetch_game_lines() if is_today else {})
 
     from src.data_fetcher import CURRENT_SEASON as _CS, PRIOR_SEASON as _PS
 
@@ -1669,7 +1665,8 @@ def update_model_charts(player_id, decay_rate, tab):
     decay_rate = decay_rate if decay_rate is not None else 0.82
     games = get_todays_games()
     def_ratings = get_team_defense_ratings()
-    series_standings = get_series_standings()
+    from src.data_fetcher import CURRENT_SEASON as _CS2
+    series_standings = db_get_series_standings(_CS2) or get_series_standings()
     per_game_probs = fetch_per_game_win_probs()
     series_win_probs = fetch_series_win_probs(series_standings, per_game_probs)
 
