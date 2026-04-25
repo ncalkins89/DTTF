@@ -184,13 +184,16 @@ def fetch_series_win_probs(
     except Exception as e:
         print(f"[odds] DraftKings live fetch failed: {e}")
 
-    # Secondary: DB (populated by cron job via update_db.py — real DK odds, not estimates)
-    if not dk_result:
-        from src.db import get_series_odds as db_get_series_odds
-        db_data = db_get_series_odds()
-        if db_data:
-            dk_result = {abbr: v["series_win_prob"] for abbr, v in db_data.items()}
-            print(f"[odds] series win probs via: DB ({len(dk_result) // 2} series)")
+    # Fill in any teams missing from live fetch using DB (e.g. DK pulls lines during live games)
+    from src.db import get_series_odds as db_get_series_odds
+    db_data = db_get_series_odds()
+    if db_data:
+        filled = [abbr for abbr, v in db_data.items() if abbr not in dk_result]
+        for abbr, v in db_data.items():
+            if abbr not in dk_result:
+                dk_result[abbr] = v["series_win_prob"]
+        if filled:
+            print(f"[odds] filled {len(filled)} teams from DB (missing from live DK): {filled}")
 
     # Fallback: Markov chain
     from nba_api.stats.static import teams as nba_teams
