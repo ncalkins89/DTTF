@@ -176,7 +176,7 @@ def fetch_series_win_probs(
     Primary: DraftKings REST API (live market prices, 10-min cache).
     Fallback: Markov chain over per-game h2h odds when DK is unavailable.
     """
-    # Primary: DraftKings series winner market via REST API
+    # Primary: DraftKings series winner market via REST API (diskcache → ScraperAPI → DK)
     dk_result = {}
     try:
         from src.series_odds import fetch_series_win_probs as dk_fetch
@@ -185,7 +185,15 @@ def fetch_series_win_probs(
             dk_result = {abbr: v["series_win_prob"] for abbr, v in dk_data.items()}
             print(f"[odds] series win probs via: DraftKings API ({len(dk_result) // 2} series)")
     except Exception as e:
-        print(f"[odds] DraftKings API failed, falling back to Markov: {e}")
+        print(f"[odds] DraftKings live fetch failed: {e}")
+
+    # Secondary: DB (populated by cron job via update_db.py — real DK odds, not estimates)
+    if not dk_result:
+        from src.db import get_series_odds as db_get_series_odds
+        db_data = db_get_series_odds()
+        if db_data:
+            dk_result = {abbr: v["series_win_prob"] for abbr, v in db_data.items()}
+            print(f"[odds] series win probs via: DB ({len(dk_result) // 2} series)")
 
     # Fallback: Markov chain
     from nba_api.stats.static import teams as nba_teams
