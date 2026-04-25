@@ -249,9 +249,33 @@ def get_series_standings(season: str = CURRENT_SEASON) -> list[dict]:
             ]
 
         # Each game_id appears twice — once per team. Build per-game records.
+        # The NBA API sets WL mid-game, so we must verify today's games are truly
+        # final via the live scoreboard before counting them.
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+        today_str = datetime.now(ZoneInfo("America/Los_Angeles")).strftime("%Y-%m-%d")
+
+        # Fetch final game IDs from today's live scoreboard
+        final_today: set[str] = set()
+        try:
+            import requests as _req
+            sb = _req.get(
+                "https://cdn.nba.com/static/json/liveData/scoreboard/todaysScoreboard_00.json",
+                timeout=5,
+            ).json()
+            for g in sb["scoreboard"]["games"]:
+                if g["gameStatus"] == 3:  # 3 = Final
+                    final_today.add(str(g["gameId"]))
+        except Exception as e:
+            print(f"[series_standings] scoreboard fetch failed: {e} — today's games excluded")
+
         game_records: dict[str, dict] = {}
         for _, row in games_df.iterrows():
             game_id = str(row["GAME_ID"])
+            game_date_str = str(row.get("GAME_DATE", ""))[:10]
+            # Skip today's games unless confirmed Final by live scoreboard
+            if game_date_str >= today_str and game_id not in final_today:
+                continue
             team_id = int(row["TEAM_ID"])
             wl = str(row.get("WL", ""))
             matchup = str(row.get("MATCHUP", ""))
@@ -315,7 +339,7 @@ def get_series_standings(season: str = CURRENT_SEASON) -> list[dict]:
         print(f"[series_standings] {len(results)} series (game results + today's schedule)")
         return results
 
-    return _cached(f"series_standings_{season}", 3600, fetch)
+    return _cached(f"series_standings_{season}", 600, fetch)
 
 
 def clear_cache() -> None:

@@ -105,8 +105,19 @@ def update_series_standings(season: str) -> None:
         print(f"  {h} {s['home_wins']}-{s['away_wins']} {a}")
 
 
+def update_series_odds() -> None:
+    _step(4, "Series odds (DraftKings via ScraperAPI)")
+    _bust("series_win_probs_dk_api")
+    from src.series_odds import fetch_series_win_probs
+    result = fetch_series_win_probs(force_refresh=True)
+    if not result:
+        print("  No series odds returned.")
+    else:
+        print(f"  {len(result) // 2} series loaded.")
+
+
 def update_fd_projections(game_date: str) -> None:
-    _step(4, "FanDuel projections")
+    _step(5, "FanDuel projections")
     _bust("fanduel_projections")
     from src.external import fetch_fanduel_projections
     from nba_api.stats.static import players as nba_players
@@ -123,7 +134,7 @@ def update_fd_projections(game_date: str) -> None:
 
 
 def update_injuries() -> None:
-    _step(5, "Injuries (ESPN)")
+    _step(6, "Injuries (ESPN)")
     _bust("espn_injuries")
     from src.external import fetch_injuries
     injuries = fetch_injuries()
@@ -137,7 +148,7 @@ def update_injuries() -> None:
 
 
 def update_de_projections(game_date: str) -> None:
-    _step(6, "DraftEdge projections")
+    _step(7, "DraftEdge projections")
     _bust("draftedge_projections")
     from src.external import fetch_draftedge_projections
     from nba_api.stats.static import players as nba_players
@@ -154,7 +165,7 @@ def update_de_projections(game_date: str) -> None:
 
 
 def update_def_ratings(season: str) -> None:
-    _step(7, "Defense ratings")
+    _step(8, "Defense ratings")
     df, is_fresh = get_def_ratings(season)
     if is_fresh:
         print("  Already fresh (< 24h) — skipping.")
@@ -177,7 +188,7 @@ def _get_playoff_team_ids(season: str) -> list[int]:
 
 
 def update_game_logs(games: list[dict], season: str) -> None:
-    _step(8, "Game logs — all playoff teams (skips players fresh < 6h)")
+    _step(9, "Game logs — all playoff teams (skips players fresh < 6h)")
     from src.data_fetcher import get_active_roster, get_player_game_logs
 
     # Cover all 16 playoff teams, not just today's matchups.
@@ -213,7 +224,7 @@ def update_game_logs(games: list[dict], season: str) -> None:
 
 def update_prior_season_logs(prior_season: str) -> None:
     """Fetch prior season game logs once (30-day TTL — season is over, data never changes)."""
-    _step(9, f"Prior season logs ({prior_season}) — skips players fresh < 30d")
+    _step(10, f"Prior season logs ({prior_season}) — skips players fresh < 30d")
     from src.db import get_game_logs
     from src.data_fetcher import CURRENT_SEASON, get_active_roster, get_player_game_logs
 
@@ -247,7 +258,7 @@ def update_model_projections_snapshot(game_date: str, games: list[dict], season:
     Idempotent — INSERT OR REPLACE means re-running just overwrites.
     Runs after game logs, DE, and FD are all loaded so projections are complete.
     """
-    _step(10, f"Model projections snapshot — {game_date}")
+    _step(11, f"Model projections snapshot — {game_date}")
     if not games:
         print("  No games — skipping.")
         return
@@ -283,8 +294,8 @@ def update_model_projections_snapshot(game_date: str, games: list[dict], season:
              game["away_team_abbr"], game["home_team_abbr"]),
         ]:
             series_record = get_series_record_for_team(team_abbr, series_standings, TEAM_MAP)
-            per_game_p = per_game_probs.get(team_abbr, 0.5)
-            series_win_prob = series_win_probs.get(team_abbr, 0.5)
+            per_game_p = per_game_probs.get(team_abbr)
+            series_win_prob = series_win_probs.get(team_abbr)
 
             for player in get_active_roster(team_id):
                 pid = player["player_id"]
@@ -349,26 +360,27 @@ def main() -> None:
     games = update_schedule(args.date)
     update_odds(args.date)
     update_series_standings(CURRENT_SEASON)
+    update_series_odds()
     update_fd_projections(args.date)
     update_injuries()
     update_de_projections(args.date)
     update_def_ratings(CURRENT_SEASON)
 
     if args.skip_logs:
-        print("\n[8] Game logs — skipped (--skip-logs)")
-        print("\n[9] Prior season logs — skipped (--skip-logs)")
+        print("\n[9] Game logs — skipped (--skip-logs)")
+        print("\n[10] Prior season logs — skipped (--skip-logs)")
     elif not games:
-        print("\n[8] Game logs — skipped (no games for this date)")
+        print("\n[9] Game logs — skipped (no games for this date)")
         update_prior_season_logs(PRIOR_SEASON)
     else:
         update_game_logs(games, CURRENT_SEASON)
         update_prior_season_logs(PRIOR_SEASON)
 
-    # Step 10 runs after logs+projections are all loaded — snapshot must be last
+    # Step 11 runs after logs+projections are all loaded — snapshot must be last
     if not args.skip_logs and games:
         update_model_projections_snapshot(args.date, games, CURRENT_SEASON)
     else:
-        print("\n[10] Model projections snapshot — skipped (no games or --skip-logs)")
+        print("\n[11] Model projections snapshot — skipped (no games or --skip-logs)")
 
     print("\n✓ Done. Open the dashboard: python3 src/dashboard.py")
 

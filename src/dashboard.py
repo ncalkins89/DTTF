@@ -67,6 +67,13 @@ TEAM_ABBR_MAP = {v: k for k, v in TEAM_MAP.items()}
 
 EXT_PROJ_PATH = Path(__file__).parent.parent / "data" / "external_projections.json"
 
+_PT = ZoneInfo("America/Los_Angeles")
+
+
+def today_pt() -> date:
+    return datetime.now(_PT).date()
+
+
 NBA_TEAM_COLORS = {
     "ATL": "#E03A3E", "BOS": "#007A33", "BKN": "#AAAAAA", "CHA": "#00788C",
     "CHI": "#CE1141", "CLE": "#860038", "DAL": "#00538C", "DEN": "#FEC524",
@@ -132,10 +139,10 @@ def _get_all_playoff_players() -> list[dict]:
 
 def build_todays_player_df(game_date: str | None = None, current_round: int = 1) -> pd.DataFrame:
     if game_date is None:
-        game_date = date.today().isoformat()
+        game_date = today_pt().isoformat()
 
     cache_key = f"{game_date}_{current_round}"
-    ttl = 300 if game_date == date.today().isoformat() else 3600
+    ttl = 300 if game_date == today_pt().isoformat() else 3600
     cached = _df_cache.get(cache_key)
     if cached:
         df, ts = cached
@@ -171,15 +178,16 @@ def build_todays_player_df(game_date: str | None = None, current_round: int = 1)
             })
             covered.add(pair)
 
-    db_odds = db_get_odds(game_date) or db_get_latest_odds() or fetch_per_game_win_probs()
-
-    per_game_probs = db_odds
+    db_odds = db_get_odds(game_date)
+    if not db_odds:
+        print(f"[dashboard] WARNING: no per-game odds in DB for {game_date} — odds will be null", flush=True)
+    per_game_probs = db_odds or {}
     series_win_probs = fetch_series_win_probs(series_standings, per_game_probs)
     used_ids = get_used_player_ids()
     ext_projs = load_external_projections()
 
     db_de = db_get_de_projections(game_date)  # DB first
-    is_today = game_date == date.today().isoformat()
+    is_today = game_date == today_pt().isoformat()
     # Only fall back to live DE / live game lines for today's date.
     # For past dates the live APIs return today's data which would be wrong.
     de_projs = db_de if db_de else (fetch_draftedge_projections() if is_today else {})
@@ -219,8 +227,12 @@ def build_todays_player_df(game_date: str | None = None, current_round: int = 1)
     rows = []
     for team_id, opp_team_id, team_abbr, opp_abbr, is_home, roster, game in team_game_info:
         series_record = get_series_record_for_team(team_abbr, series_standings, TEAM_MAP)
-        per_game_p = per_game_probs.get(team_abbr, 0.5)
-        series_win_prob = series_win_probs.get(team_abbr, 0.5)
+        per_game_p = per_game_probs.get(team_abbr)
+        if per_game_p is None:
+            print(f"[dashboard] WARNING: no per-game odds for {team_abbr}", flush=True)
+        series_win_prob = series_win_probs.get(team_abbr)
+        if series_win_prob is None:
+            print(f"[dashboard] WARNING: no series win prob for {team_abbr}", flush=True)
 
         for player in roster:
             pid = player["player_id"]
@@ -258,11 +270,11 @@ def build_todays_player_df(game_date: str | None = None, current_round: int = 1)
             all_sources = [p for p in [our_pra, de_pra, fd_pra, playoff_avg] if p is not None]
             pred_pra = round(sum(all_sources) / len(all_sources), 1)
 
-            lose_prob = 1.0 - series_win_prob
-            pred_urgency = round(pred_pra * lose_prob, 2)
-            urgency_ours = round(our_pra * lose_prob, 2)
-            urgency_de   = round(de_pra  * lose_prob, 2) if de_pra  is not None else None
-            urgency_fd   = round(fd_pra  * lose_prob, 2) if fd_pra  is not None else None
+            lose_prob = (1.0 - series_win_prob) if series_win_prob is not None else None
+            pred_urgency = round(pred_pra * lose_prob, 2) if lose_prob is not None else None
+            urgency_ours = round(our_pra * lose_prob, 2) if lose_prob is not None else None
+            urgency_de   = round(de_pra  * lose_prob, 2) if (de_pra  is not None and lose_prob is not None) else None
+            urgency_fd   = round(fd_pra  * lose_prob, 2) if (fd_pra  is not None and lose_prob is not None) else None
 
             inj = injuries.get(player["player_name"].lower(), {})
             inj_status = inj.get("status", "")
@@ -310,9 +322,9 @@ def build_todays_player_df(game_date: str | None = None, current_round: int = 1)
                 "RS Avg": rs_avg,
                 "PO Avg": playoff_avg,
                 "Ext Proj": ext_pra,
-                "Series Win%": round(series_win_prob, 3),
+                "Series Win%": round(series_win_prob, 3) if series_win_prob is not None else None,
                 "series_win_prob_raw": series_win_prob,
-                "series_lose_prob_raw": round(1.0 - series_win_prob, 3),
+                "series_lose_prob_raw": round(1.0 - series_win_prob, 3) if series_win_prob is not None else None,
                 "Urgency": pred_urgency,
                 "Urgency_Ours": urgency_ours,
                 "Urgency_DE": urgency_de,
@@ -490,10 +502,10 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Ar
 .date-chip-num { font-size:14px; font-weight:600; color:#1d1d1f; line-height:1.3; white-space:nowrap; }
 /* Hide the date picker text input — show only the calendar popup */
 #date-picker-wrapper .SingleDatePicker { position:static !important; }
-#date-picker-wrapper .SingleDatePickerInput { background:transparent !important; border:none !important; padding:0 !important; height:0 !important; overflow:hidden !important; display:block !important; }
+#date-picker-wrapper .SingleDatePickerInput { position:absolute !important; left:-9999px !important; width:1px !important; height:1px !important; overflow:hidden !important; border:none !important; background:transparent !important; }
 #date-picker-wrapper .SingleDatePickerInput__withBorder { border:none !important; }
-#date-picker-wrapper .DateInput { width:0 !important; height:0 !important; overflow:hidden !important; padding:0 !important; }
-#date-picker-wrapper input.DateInput_input { opacity:0 !important; width:1px !important; height:1px !important; padding:0 !important; margin:0 !important; min-width:0 !important; position:absolute !important; }
+#date-picker-wrapper .DateInput { position:absolute !important; left:-9999px !important; width:1px !important; height:1px !important; }
+#date-picker-wrapper input.DateInput_input { position:absolute !important; left:-9999px !important; opacity:0 !important; width:1px !important; height:1px !important; }
 #date-picker-wrapper .SingleDatePickerInput_calendarIcon { display:none !important; }
 .ag-header-group-cell-label { justify-content: center !important; font-weight: 600; color: #1d1d1f; }
 .ag-theme-alpine .ag-cell { padding-left: 8px !important; padding-right: 8px !important; }
@@ -703,32 +715,16 @@ def render_schedule_strip(store_data, _sentinel):
         else:
             away_w, away_l = home_l, home_w  # fallback
 
-        is_past = game_date and str(game_date)[:10] < date.today().isoformat()
+        is_past = game_date and str(game_date)[:10] < today_pt().isoformat()
         if is_past:
             game_num = home_w + away_w
         else:
-            # Count series games scheduled strictly between today and this date
-            # to find the correct future game number.
-            from src.db import _conn as _db_conn
-            today_iso = date.today().isoformat()
-            gd_iso = str(game_date)[:10]
-            with _db_conn() as cx:
-                sched_row = cx.execute(
-                    "SELECT home_team_id, away_team_id FROM schedule WHERE game_id = ?",
-                    (gid,),
-                ).fetchone()
-                intervening = 0
-                if sched_row and gd_iso > today_iso:
-                    intervening = cx.execute(
-                        """SELECT COUNT(*) FROM schedule
-                           WHERE game_date > ? AND game_date < ?
-                           AND ((home_team_id=? AND away_team_id=?)
-                                OR (home_team_id=? AND away_team_id=?))""",
-                        (today_iso, gd_iso,
-                         sched_row["home_team_id"], sched_row["away_team_id"],
-                         sched_row["away_team_id"], sched_row["home_team_id"]),
-                    ).fetchone()[0]
-            game_num = home_w + away_w + intervening + 1
+            # Last digit of NBA game_id encodes game number in the series
+            # e.g. 0042500114 → Game 4. Fallback to series wins + 1.
+            try:
+                game_num = int(gid[-1])
+            except (ValueError, IndexError):
+                game_num = home_w + away_w + 1
         chips.append(html.Div([
             html.Div(f"Game {game_num}",
                      style={"fontSize": "10px", "color": "#aaa", "marginBottom": "2px", "textTransform": "uppercase", "letterSpacing": "0.5px"}),
@@ -754,7 +750,7 @@ def render_schedule_strip(store_data, _sentinel):
     prevent_initial_call=False,
 )
 def init_date_picker(_):
-    return date.today().isoformat()
+    return today_pt().isoformat()
 
 
 # ── Date strip: render chips & handle navigation ─────────────────────────────
@@ -781,7 +777,7 @@ def shift_date_strip(prev_clicks, next_clicks, offset):
 def render_date_strip(offset, selected_date):
     from datetime import timedelta
     offset = offset or 0
-    today = date.today()
+    today = today_pt()
     selected = date.fromisoformat(str(selected_date)[:10]) if selected_date else today
 
     # Anchor week so that the selected date is always visible
@@ -847,7 +843,7 @@ def chip_date_click(n_clicks_list, id_list, offset):
         return dash.no_update, dash.no_update
     clicked_date = triggered["date"]
     # Recentre the strip on the clicked date
-    today = date.today()
+    today = today_pt()
     d = date.fromisoformat(clicked_date)
     new_offset = (d - today).days
     # Snap offset to nearest week start
@@ -923,7 +919,7 @@ app.clientside_callback(
     prevent_initial_call=False,
 )
 def check_db_status(_, store_data):
-    today = date.today().isoformat()
+    today = today_pt().isoformat()
     if db_get_schedule(today):
         return []
     loading = store_data is None
@@ -955,7 +951,7 @@ def check_db_status(_, store_data):
 )
 def run_load_db(_, selected_date):
     import subprocess, threading
-    load_date = selected_date or date.today().isoformat()
+    load_date = selected_date or today_pt().isoformat()
     def _run():
         subprocess.run(
             [sys.executable, "scripts/update_db.py", "--date", load_date],
@@ -1156,7 +1152,7 @@ def load_and_render_today(tab, _, game_date, _load_trigger, urgency_field):
     store = {"rows": df[available].to_dict("records"), "game_date": game_date}
 
     # Pre-warm cache for adjacent game dates in the background.
-    effective_date = game_date or date.today().isoformat()
+    effective_date = game_date or today_pt().isoformat()
     import threading
     threading.Thread(target=_prefetch_adjacent_dates, args=(effective_date,), daemon=True).start()
 
@@ -1769,7 +1765,7 @@ def update_model_charts(player_id, decay_rate, tab):
     # Today's projection as a single point beyond the last game date
     if model_dates_chron:
         pra_fig.add_trace(go.Scatter(
-            x=[date.today()], y=[proj["projected_pra"]], mode="markers+text",
+            x=[today_pt()], y=[proj["projected_pra"]], mode="markers+text",
             name=f"Today's proj ({proj['projected_pra']})",
             marker=dict(color="#2ecc71", size=14, symbol="diamond"),
             text=[str(proj["projected_pra"])], textposition="top center",
@@ -2066,12 +2062,12 @@ def handle_clear_cache(n_clicks):
 def update_last_updated(_):
     # Show the most recent data update across all dates (DB freshness indicator)
     from src.db import get_last_updated as _get_latest
-    today = date.today().isoformat()
+    today = today_pt().isoformat()
     ts = _get_latest(today)
     if not ts:
         # Fall back to checking yesterday
         from datetime import timedelta
-        yesterday = (date.today() - timedelta(days=1)).isoformat()
+        yesterday = (today_pt() - timedelta(days=1)).isoformat()
         ts = _get_latest(yesterday)
     if not ts:
         return ""

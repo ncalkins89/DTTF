@@ -154,7 +154,7 @@ def project_player(
     game_logs: pd.DataFrame,
     def_ratings: pd.DataFrame,
     series_record: dict,
-    per_game_win_prob: float = 0.5,
+    per_game_win_prob: float | None = None,
     expected_margin: float | None = None,
     decay_rate: float = 0.82,
     current_round: int = 1,
@@ -176,9 +176,13 @@ def project_player(
     wins = series_record.get("wins", 0)
     losses = series_record.get("losses", 0)
 
-    series_win_prob = compute_series_win_probability(wins, losses, per_game_win_prob)
-    total_games = compute_total_expected_games(wins, losses, per_game_win_prob, current_round)
-    urgency = compute_urgency(after_spread_adj, series_win_prob)
+    if per_game_win_prob is not None:
+        series_win_prob = compute_series_win_probability(wins, losses, per_game_win_prob)
+        total_games = compute_total_expected_games(wins, losses, per_game_win_prob, current_round)
+    else:
+        series_win_prob = None
+        total_games = None
+    urgency = compute_urgency(after_spread_adj, series_win_prob) if series_win_prob is not None else None
 
     if include_rolling and not game_logs.empty:
         decay_weights = compute_decay_weights(game_logs["GAME_DATE"].tolist(), decay_rate)
@@ -203,8 +207,8 @@ def project_player(
         "opponent_adj_factor": round(opponent_def_rating / league_avg if league_avg else 1.0, 3),
         "spread_adj_factor": round(after_spread_adj / after_opponent_adj if after_opponent_adj else 1.0, 3),
         "urgency": urgency,
-        "series_win_prob": round(series_win_prob, 3),
-        "expected_future_games": round(total_games, 1),
+        "series_win_prob": round(series_win_prob, 3) if series_win_prob is not None else None,
+        "expected_future_games": round(total_games, 1) if total_games is not None else None,
         "games_used": len(game_logs),
         "game_dates": game_dates,
         "per_game_pra": per_game_pra,

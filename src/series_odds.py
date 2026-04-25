@@ -57,9 +57,18 @@ def _nickname_to_abbr() -> dict[str, str]:
 
 
 def _fetch_dk_api() -> dict[str, dict]:
+    import os
+    scraper_key = os.environ.get("SCRAPER_API_KEY", "")
+    if scraper_key:
+        fetch_url = f"https://api.scraperapi.com?api_key={scraper_key}&url={requests.utils.quote(_DK_API_URL, safe='')}"
+        print("[series_odds] fetching via ScraperAPI")
+    else:
+        fetch_url = _DK_API_URL
+        print("[series_odds] fetching direct (no SCRAPER_API_KEY)")
+
     for attempt in range(3):
         try:
-            resp = requests.get(_DK_API_URL, headers=_HEADERS, timeout=30)
+            resp = requests.get(fetch_url, headers=_HEADERS, timeout=60)
             break
         except requests.Timeout:
             if attempt == 2:
@@ -158,10 +167,12 @@ def fetch_series_win_probs(force_refresh: bool = False) -> dict[str, dict]:
         result = {}
 
     if result:
-        CACHE.set(cache_key, result, expire=600)
-        print(f"[series_odds] {len(result) // 2} series loaded from DK API")
+        CACHE.set(cache_key, result, expire=43200)  # 12-hour cache
+        from src.db import upsert_series_odds
+        upsert_series_odds(result)
+        print(f"[series_odds] {len(result) // 2} series loaded from DK API, saved to DB")
     else:
-        print("[series_odds] no data — check DK API endpoint")
+        print("[series_odds] fetch failed — returning empty, Markov chain fallback will apply")
 
     return result
 

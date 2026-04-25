@@ -177,13 +177,13 @@ def fetch_series_win_probs(
     Fallback: Markov chain over per-game h2h odds when DK is unavailable.
     """
     # Primary: DraftKings series winner market via REST API
+    dk_result = {}
     try:
         from src.series_odds import fetch_series_win_probs as dk_fetch
         dk_data = dk_fetch()
         if dk_data:
-            result = {abbr: v["series_win_prob"] for abbr, v in dk_data.items()}
-            print(f"[odds] series win probs via: DraftKings API ({len(result) // 2} series)")
-            return result
+            dk_result = {abbr: v["series_win_prob"] for abbr, v in dk_data.items()}
+            print(f"[odds] series win probs via: DraftKings API ({len(dk_result) // 2} series)")
     except Exception as e:
         print(f"[odds] DraftKings API failed, falling back to Markov: {e}")
 
@@ -198,9 +198,29 @@ def fetch_series_win_probs(
     if per_game_probs is None:
         per_game_probs = fetch_per_game_win_probs()
 
+    if dk_result:
+        team_map = {t["id"]: t["abbreviation"] for t in nba_teams.get_teams()}
+        for series in series_standings:
+            home_abbr = team_map.get(series["home_team_id"], "")
+            away_abbr = team_map.get(series["away_team_id"], "")
+            if home_abbr and home_abbr not in dk_result:
+                print(f"[odds] WARNING: {home_abbr} not on DK board — series win prob will be null")
+            if away_abbr and away_abbr not in dk_result:
+                print(f"[odds] WARNING: {away_abbr} not on DK board — series win prob will be null")
+        print(f"[odds] series win probs via: DraftKings API")
+
+    return dk_result
+
+
+def _markov_series_win_probs(
+    series_standings: list[dict],
+    per_game_probs: dict[str, float],
+) -> dict[str, float]:
+    """Markov chain series win probabilities from per-game odds. Not used by default."""
+    from nba_api.stats.static import teams as nba_teams
+    from src.projections import compute_series_win_probability
     team_map = {t["id"]: t["abbreviation"] for t in nba_teams.get_teams()}
     result = {}
-
     for series in series_standings:
         home_abbr = team_map.get(series["home_team_id"], "")
         away_abbr = team_map.get(series["away_team_id"], "")
@@ -213,11 +233,7 @@ def fetch_series_win_probs(
             result[home_abbr] = round(home_prob, 3)
         if away_abbr:
             result[away_abbr] = round(1.0 - home_prob, 3)
-
-    source = "The-Odds-API Markov" if per_game_probs else "series record + 50/50"
-    print(f"[odds] series win probs via: {source}")
     return result
-
 
 
 def get_series_record_for_team(

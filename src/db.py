@@ -138,6 +138,14 @@ def init_db() -> None:
             fetched_at      TEXT NOT NULL,
             PRIMARY KEY (game_date, player_id)
         );
+
+        CREATE TABLE IF NOT EXISTS series_odds (
+            team_abbr        TEXT PRIMARY KEY,
+            series_win_prob  REAL NOT NULL,
+            american_odds    INTEGER,
+            opponent_abbr    TEXT,
+            fetched_at       TEXT NOT NULL
+        );
         """)
 
 
@@ -184,27 +192,40 @@ def upsert_odds(game_date: str, odds: dict[str, float]) -> None:
 
 
 def upsert_series_standings(season: str, standings: list[dict]) -> None:
+    """Normalize team order (lower team_id always stored as home_team_id) to prevent duplicate rows."""
     now = datetime.utcnow().isoformat()
-    rows = [
-        {
+    rows = []
+    for s in standings:
+        t1, t2 = s["home_team_id"], s["away_team_id"]
+        w1, w2 = s["home_wins"], s["away_wins"]
+        if t1 > t2:
+            t1, t2 = t2, t1
+            w1, w2 = w2, w1
+        rows.append({
             "season": season,
-            "home_team_id": s["home_team_id"],
-            "away_team_id": s["away_team_id"],
-            "home_wins": s["home_wins"],
-            "away_wins": s["away_wins"],
+            "home_team_id": t1,
+            "away_team_id": t2,
+            "home_wins": w1,
+            "away_wins": w2,
             "updated_at": now,
-        }
-        for s in standings
-    ]
+        })
+    # Deduplicate in case API returned both orderings for the same series
+    seen = set()
+    deduped = []
+    for r in rows:
+        key = (r["home_team_id"], r["away_team_id"])
+        if key not in seen:
+            seen.add(key)
+            deduped.append(r)
     with _conn() as cx:
         cx.executemany(
             """INSERT OR REPLACE INTO series_standings
                (season, home_team_id, away_team_id, home_wins, away_wins, updated_at)
                VALUES (:season, :home_team_id, :away_team_id,
                        :home_wins, :away_wins, :updated_at)""",
-            rows,
+            deduped,
         )
-    print(f"[db] upserted {len(rows)} series standings")
+    print(f"[db] upserted {len(deduped)} series standings")
 
 
 def upsert_de_projections(game_date: str, projections: dict[int, dict]) -> None:
@@ -580,6 +601,31 @@ def get_model_projections(game_date: str) -> list[dict]:
             (game_date,),
         ).fetchall()
     return [dict(r) for r in rows]
+
+
+def upsert_series_odds(data: dict) -> None:
+    """data: {team_abbr: {"series_win_prob": float, "american_odds": int, "opponent_abbr": str}}"""
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc).isoformat()
+    with _conn() as cx:
+        cx.executemany(
+            """INSERT OR REPLACE INTO series_odds
+               (team_abbr, series_win_prob, american_odds, opponent_abbr, fetched_at)
+               VALUES (?, ?, ?, ?, ?)""",
+            [
+                (abbr, v["series_win_prob"], v.get("american_odds"), v.get("opponent_abbr"), now)
+                for abbr, v in data.items()
+            ],
+        )
+
+
+def get_series_odds() -> dict:
+    """Returns {team_abbr: {"series_win_prob": float, "american_odds": int, "opponent_abbr": str}}"""
+    with _conn() as cx:
+        rows = cx.execute(
+            "SELECT team_abbr, series_win_prob, american_odds, opponent_abbr FROM series_odds"
+        ).fetchall()
+    return {r["team_abbr"]: dict(r) for r in rows}
 
 
 def get_known_game_dates() -> list[str]:
