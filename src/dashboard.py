@@ -339,6 +339,21 @@ def build_todays_player_df(game_date: str | None = None, current_round: int = 1)
     df = pd.DataFrame(rows)
     if df.empty:
         return df
+
+    # Team commitment: picks used + total eligible per team
+    history = get_pick_history()
+    picks_per_team: dict[str, int] = {}
+    for p in history:
+        t = p.get("team_abbr", "")
+        picks_per_team[t] = picks_per_team.get(t, 0) + 1
+    all_playoff = _get_all_playoff_players()
+    total_per_team: dict[str, int] = {}
+    for p in all_playoff:
+        total_per_team[p["team_abbr"]] = total_per_team.get(p["team_abbr"], 0) + 1
+    df["team_picks_used"] = df["Team"].map(lambda t: picks_per_team.get(t, 0))
+    df["team_total"] = df["Team"].map(lambda t: total_per_team.get(t, 1))
+    df["team_color"] = df["Team"].map(lambda t: NBA_TEAM_COLORS.get(t, "#0071e3"))
+
     df = df.sort_values("Urgency", ascending=False).reset_index(drop=True)
     _df_cache[cache_key] = (df, time.time())
     return df
@@ -1056,6 +1071,8 @@ def _render_table_from_store(store_data, urgency_field):
          "cellStyle": {"function": "({'color': params.value&&params.value[0]==='✓' ? '#6e6e73' : params.value&&params.value[0]==='❌' ? '#dc2626' : '#e67e22', 'fontSize':'12px', 'fontWeight':'600'})"}},
         {"field": "Pos"},
         {"field": "Team"},
+        {"field": "team_picks_used", "headerName": "Cmmt", "width": 90,
+         "cellRenderer": "TeamCommitmentBar", "sortable": False, "filter": False},
         {"field": "Opp"},
         {"field": "Urgency_Display", "headerName": "Urgency", "width": 85,
          "sort": "desc",
