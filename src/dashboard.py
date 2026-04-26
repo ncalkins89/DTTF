@@ -360,7 +360,7 @@ def _today_layout():
         # ── Date strip (NBA scoreboard style) ───────────────────────────
         # Store tracking the week offset (0 = week containing today)
         dcc.Store(id="date-strip-offset", data=0),
-        html.Div(style={"position": "relative"}, children=[
+        html.Div(style={"position": "relative", "marginTop": "14px"}, children=[
             # Real date picker — always rendered, zero-size, positioned so its
             # calendar popup floats naturally. JS clicks it when the 🗓 icon is pressed.
             html.Div(
@@ -394,7 +394,7 @@ def _today_layout():
                 ),
             ], style={"display": "flex", "alignItems": "center", "gap": "0",
                       "background": "#f5f5f7", "borderRadius": "10px",
-                      "padding": "4px 8px", "width": "fit-content"}),
+                      "padding": "5px 10px", "width": "fit-content"}),
         ]),
 
         # ── Selected date label ──────────────────────────────────────────
@@ -488,14 +488,14 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Ar
 .date-nav-btn { background:none; border:none; font-size:22px; color:#0071e3; cursor:pointer; padding:0 8px; line-height:1; flex-shrink:0; }
 .date-nav-btn:hover { color:#0051a8; }
 /* All chips identical fixed size — only color/bg changes for active/hover */
-.date-chip { display:inline-flex; flex-direction:column; align-items:center; padding:5px 0; border-radius:8px; cursor:pointer; width:54px; flex-shrink:0; transition:background 0.12s; user-select:none; box-sizing:border-box; }
+.date-chip { display:inline-flex; flex-direction:column; align-items:center; padding:6px 0; border-radius:8px; cursor:pointer; width:62px; flex-shrink:0; transition:background 0.12s; user-select:none; box-sizing:border-box; }
 .date-chip:hover:not(.no-game) { background:#e5e5ea; }
 .date-chip.active { background:#0071e3 !important; }
 .date-chip.active .date-chip-day { color:rgba(255,255,255,0.8) !important; }
 .date-chip.active .date-chip-num, .date-chip.active .date-chip-num span { color:#fff !important; }
 .date-chip.no-game { opacity:0.3; cursor:default; }
-.date-chip-day { font-size:10px; font-weight:500; color:#8e8e93; letter-spacing:0.6px; text-transform:uppercase; line-height:1.5; white-space:nowrap; }
-.date-chip-num { font-size:14px; font-weight:600; color:#1d1d1f; line-height:1.3; white-space:nowrap; }
+.date-chip-day { font-size:11px; font-weight:500; color:#8e8e93; letter-spacing:0.6px; text-transform:uppercase; line-height:1.5; white-space:nowrap; }
+.date-chip-num { font-size:15px; font-weight:600; color:#1d1d1f; line-height:1.3; white-space:nowrap; }
 /* Hide the date picker text input — show only the calendar popup */
 #date-picker-wrapper .SingleDatePicker { position:static !important; }
 #date-picker-wrapper .SingleDatePickerInput { position:absolute !important; left:-9999px !important; width:1px !important; height:1px !important; overflow:hidden !important; border:none !important; background:transparent !important; }
