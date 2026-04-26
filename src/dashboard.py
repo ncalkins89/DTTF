@@ -776,10 +776,9 @@ def render_date_strip(offset, selected_date):
     today = today_pt()
     selected = date.fromisoformat(str(selected_date)[:10]) if selected_date else today
 
-    # Anchor week so that the selected date is always visible
-    # Week starts on Monday of the week containing (today + offset days)
+    # Center the strip on the anchor date (3 chips before, today/anchor, 3 chips after)
     anchor = today + timedelta(days=offset)
-    week_start = anchor - timedelta(days=anchor.weekday())  # Monday
+    week_start = anchor - timedelta(days=3)
 
     game_dates = set(db_get_known_game_dates())
     today_iso = today.isoformat()
@@ -838,13 +837,10 @@ def chip_date_click(n_clicks_list, id_list, offset):
     if not triggered or not isinstance(triggered, dict):
         return dash.no_update, dash.no_update
     clicked_date = triggered["date"]
-    # Recentre the strip on the clicked date
     today = today_pt()
     d = date.fromisoformat(clicked_date)
+    # Center strip on clicked date
     new_offset = (d - today).days
-    # Snap offset to nearest week start
-    anchor = today + timedelta(days=new_offset)
-    new_offset = (anchor - timedelta(days=anchor.weekday()) - (today - timedelta(days=today.weekday()))).days
     return clicked_date, new_offset
 
 
