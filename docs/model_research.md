@@ -100,7 +100,7 @@ Explains which features drove a prediction. Useful for debugging XGBoost once it
 
 ### Outlier robustness in EWMA
 A single game of 5 PRA or 70 PRA can meaningfully shift the decay-weighted average, especially for players with short recent histories. Options to address:
-- Winsorize inputs (e.g. cap at ±2.5 SD from the player's own mean before weighting)
+- Winsorize inputs (e.g. cap at ±N SD from the player's own mean before weighting). The winsorization threshold N should be jointly optimized with other EWMA hyperparameters (decay rate, window size) rather than chosen independently — they interact, and the optimal N depends on what decay rate is used.
 - Use median instead of weighted mean as a robustness check
 - Flag games where MIN < 15 or team point differential > 20 as "context games" and down-weight separately from recency decay
 
