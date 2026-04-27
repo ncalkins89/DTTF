@@ -41,17 +41,9 @@ def _step(n: int, label: str) -> None:
     print(f"\n[{n}] {label} ...", flush=True)
 
 
-# All fetch functions use diskcache internally. Delete the relevant key first
-# so the update script always gets live data, not a cached response.
-def _bust(key: str) -> None:
-    from src.data_fetcher import CACHE
-    CACHE.delete(key)
-
-
 def update_schedule(game_date: str) -> list[dict]:
     _step(1, f"Schedule — {game_date}")
     from src.data_fetcher import CURRENT_SEASON, get_todays_games
-    _bust(f"todays_games_{game_date}")
     games = get_todays_games(game_date)
     if not games:
         print("  No games found for this date.")
@@ -69,7 +61,6 @@ def update_odds(game_date: str) -> None:
     if not api_key:
         print("  ODDS_API_KEY not set — skipping.")
         return
-    _bust("odds_api_all_markets")
     from src.odds import _fetch_all_markets
     win_probs, game_lines = _fetch_all_markets(api_key)
     if not win_probs:
@@ -90,7 +81,6 @@ def update_odds(game_date: str) -> None:
 
 def update_series_standings(season: str) -> None:
     _step(3, "Series standings")
-    _bust(f"series_standings_{season}")
     from src.data_fetcher import get_series_standings
     from nba_api.stats.static import teams as nba_teams
     team_map = {t["id"]: t["abbreviation"] for t in nba_teams.get_teams()}
@@ -107,7 +97,6 @@ def update_series_standings(season: str) -> None:
 
 def update_series_odds() -> None:
     _step(4, "Series odds (DraftKings via ScraperAPI)")
-    _bust("series_win_probs_dk_api")
     from src.series_odds import fetch_series_win_probs
     result = fetch_series_win_probs(force_refresh=True)
     if not result:
@@ -118,7 +107,6 @@ def update_series_odds() -> None:
 
 def update_fd_projections(game_date: str) -> None:
     _step(5, "FanDuel projections")
-    _bust("fanduel_projections")
     from src.external import fetch_fanduel_projections
     from nba_api.stats.static import players as nba_players
     projs = fetch_fanduel_projections()
@@ -135,7 +123,6 @@ def update_fd_projections(game_date: str) -> None:
 
 def update_injuries() -> None:
     _step(6, "Injuries (ESPN)")
-    _bust("espn_injuries")
     from src.external import fetch_injuries
     injuries = fetch_injuries()
     if not injuries:
@@ -149,7 +136,6 @@ def update_injuries() -> None:
 
 def update_de_projections(game_date: str) -> None:
     _step(7, "DraftEdge projections")
-    _bust("draftedge_projections")
     from src.external import fetch_draftedge_projections
     from nba_api.stats.static import players as nba_players
     projs = fetch_draftedge_projections()

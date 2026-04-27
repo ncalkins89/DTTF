@@ -3,17 +3,11 @@ series_odds.py — fetch NBA playoff series winner odds from DraftKings REST API
 
 Uses the public DraftKings Nash API (no auth, no Playwright required).
 Returns {team_abbr: {"series_win_prob": float, "american_odds": int, "opponent_abbr": str}}
-Cached 10 minutes in diskcache.
 """
 import re
-from pathlib import Path
 
-import diskcache
 import requests
 from nba_api.stats.static import teams as nba_teams
-
-CACHE_DIR = Path(__file__).parent.parent / "data" / "cache"
-CACHE = diskcache.Cache(str(CACHE_DIR))
 
 _DK_API_URL = (
     "https://sportsbook-nash.draftkings.com/api/sportscontent"
@@ -150,16 +144,7 @@ def _fetch_dk_api() -> dict[str, dict]:
 
 
 def fetch_series_win_probs(force_refresh: bool = False) -> dict[str, dict]:
-    """
-    Returns {team_abbr: {"series_win_prob": float, "american_odds": int, "opponent_abbr": str}}
-    Cached 10 minutes.
-    """
-    cache_key = "series_win_probs_dk_api"
-    if not force_refresh:
-        cached = CACHE.get(cache_key)
-        if cached is not None:
-            return cached
-
+    """Returns {team_abbr: {"series_win_prob": float, "american_odds": int, "opponent_abbr": str}}"""
     try:
         result = _fetch_dk_api()
     except Exception as e:
@@ -167,12 +152,11 @@ def fetch_series_win_probs(force_refresh: bool = False) -> dict[str, dict]:
         result = {}
 
     if result:
-        CACHE.set(cache_key, result, expire=43200)  # 12-hour cache
         from src.db import upsert_series_odds
         upsert_series_odds(result)
         print(f"[series_odds] {len(result) // 2} series loaded from DK API, saved to DB")
     else:
-        print("[series_odds] fetch failed — returning empty, Markov chain fallback will apply")
+        print("[series_odds] fetch failed — returning empty")
 
     return result
 

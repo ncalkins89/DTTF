@@ -1,12 +1,7 @@
 import os
 import time
-from pathlib import Path
 
-import diskcache
 import requests
-
-CACHE_DIR = Path(__file__).parent.parent / "data" / "cache"
-CACHE = diskcache.Cache(str(CACHE_DIR))
 
 ODDS_API_BASE = "https://api.the-odds-api.com/v4"
 
@@ -33,13 +28,7 @@ def _fetch_all_markets(api_key: str) -> tuple[dict[str, float], dict[str, dict]]
       - game_lines: {team_abbr: {"spread": float, "total": float, "is_home": bool}}
         spread = points home team is favored by (negative = underdog)
         total  = O/U line for the game
-    Both cached 24 hours.
     """
-    cache_key = "odds_api_all_markets"
-    cached = CACHE.get(cache_key)
-    if cached is not None:
-        return cached
-
     try:
         resp = requests.get(
             f"{ODDS_API_BASE}/sports/basketball_nba/odds/",
@@ -123,7 +112,6 @@ def _fetch_all_markets(api_key: str) -> tuple[dict[str, float], dict[str, dict]]
                 "is_home": is_home,
             }
 
-    CACHE.set(cache_key, (win_probs, game_lines), expire=86400)
     return win_probs, game_lines
 
 
@@ -173,7 +161,7 @@ def fetch_series_win_probs(
     Primary: DraftKings REST API (live market prices, 10-min cache).
     Fallback: Markov chain over per-game h2h odds when DK is unavailable.
     """
-    # Primary: DraftKings series winner market via REST API (diskcache → ScraperAPI → DK)
+    # Primary: DraftKings series winner market via REST API (ScraperAPI → DK)
     dk_result = {}
     try:
         from src.series_odds import fetch_series_win_probs as dk_fetch

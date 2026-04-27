@@ -11,11 +11,6 @@ import re
 import urllib.request
 from pathlib import Path
 
-import diskcache
-
-CACHE_DIR = Path(__file__).parent.parent / "data" / "cache"
-CACHE = diskcache.Cache(str(CACHE_DIR))
-
 _DRAFTEDGE_URL = "https://draftedge.com/draftedge-data/nba_proj_dk.json"
 _HEADERS = {
     "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
@@ -56,15 +51,7 @@ def _fuzzy_match(name: str, name_map: dict[str, int]) -> int | None:
 
 
 def fetch_draftedge_projections() -> dict[int, dict]:
-    """
-    Returns {player_id: {"pts", "reb", "ast", "pra", "team", "opp"}}
-    for today's slate. Cached 30 minutes.
-    """
-    cache_key = "draftedge_projections"
-    cached = CACHE.get(cache_key)
-    if cached is not None:
-        return cached
-
+    """Returns {player_id: {"pts", "reb", "ast", "pra", "team", "opp"}} for today's slate."""
     try:
         req = urllib.request.Request(_DRAFTEDGE_URL, headers=_HEADERS)
         resp = urllib.request.urlopen(req, timeout=10)
@@ -112,7 +99,6 @@ def fetch_draftedge_projections() -> dict[int, dict]:
         print(f"[draftedge] {len(unmatched)} unmatched players: {unmatched[:5]}")
     print(f"[draftedge] matched {len(result)}/{len(rows)} players")
 
-    CACHE.set(cache_key, result, expire=1800)
     return result
 
 
@@ -155,16 +141,8 @@ def _get_fd_slate_id() -> str | None:
 
 
 def fetch_fanduel_projections() -> dict[int, dict]:
-    """
-    Returns {player_id: {"pts", "reb", "ast", "pra", "min", "fd_fantasy", "team", "opp"}}
-    from FanDuel Research DFS projections. Cached 30 minutes.
-    """
+    """Returns {player_id: {"pts", "reb", "ast", "pra", "min", "fd_fantasy", "team", "opp"}} from FanDuel Research."""
     import requests as _req
-
-    cache_key = "fanduel_projections"
-    cached = CACHE.get(cache_key)
-    if cached is not None:
-        return cached
 
     try:
         slate_id = _get_fd_slate_id()
@@ -237,23 +215,13 @@ def fetch_fanduel_projections() -> dict[int, dict]:
         print(f"[fanduel] {len(unmatched)} unmatched: {unmatched[:5]}")
     print(f"[fanduel] matched {len(result)}/{len(rows)} players (slate {slate_id})")
 
-    CACHE.set(cache_key, result, expire=1800)
     return result
 
 
 _ESPN_INJURIES_URL = "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/injuries"
 
 def fetch_injuries() -> dict[str, dict]:
-    """
-    Returns {player_name_lower: {"status": str, "comment": str}} from ESPN.
-    Status values: "Out", "Day-To-Day", "Questionable", "Probable", "Doubtful".
-    Cached 30 min.
-    """
-    cache_key = "espn_injuries"
-    cached = CACHE.get(cache_key)
-    if cached is not None:
-        return cached
-
+    """Returns {player_name_lower: {"status": str, "comment": str}} from ESPN."""
     import requests
     try:
         data = requests.get(_ESPN_INJURIES_URL, timeout=10).json()
@@ -272,6 +240,5 @@ def fetch_injuries() -> dict[str, dict]:
                 "comment": p.get("shortComment", ""),
             }
 
-    CACHE.set(cache_key, result, expire=1800)
     print(f"[injuries] {len(result)} players on injury report")
     return result

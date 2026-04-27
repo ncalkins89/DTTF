@@ -2,7 +2,6 @@ import time
 from datetime import date, datetime
 from pathlib import Path
 
-import diskcache
 import pandas as pd
 from nba_api.stats.endpoints import (
     CommonTeamRoster,
@@ -12,21 +11,9 @@ from nba_api.stats.endpoints import (
 )
 from nba_api.stats.static import teams as nba_teams
 
-CACHE_DIR = Path(__file__).parent.parent / "data" / "cache"
-CACHE = diskcache.Cache(str(CACHE_DIR))
-
 CURRENT_SEASON = "2025-26"
 PRIOR_SEASON = "2024-25"
-REQUEST_DELAY = 0.5  # seconds between uncached nba_api calls
-
-
-def _cached(key: str, ttl: int, fetch_fn):
-    result = CACHE.get(key)
-    if result is None:
-        time.sleep(REQUEST_DELAY)
-        result = fetch_fn()
-        CACHE.set(key, result, expire=ttl)
-    return result
+REQUEST_DELAY = 0.5  # seconds between nba_api calls
 
 
 def get_todays_games(game_date: str | None = None) -> list[dict]:
@@ -56,7 +43,8 @@ def get_todays_games(game_date: str | None = None) -> list[dict]:
             })
         return games
 
-    return _cached(f"todays_games_{game_date}", 3600, fetch)
+    time.sleep(REQUEST_DELAY)
+    return fetch()
 
 
 def get_active_roster(team_id: int, season: str = CURRENT_SEASON) -> list[dict]:
@@ -174,7 +162,8 @@ def get_player_game_logs_season(
         logs = logs[logs["MIN"] >= 5]
         return logs.reset_index(drop=True)
 
-    return _cached(f"game_logs_historical_{player_id}_{season}_{season_type}", 86400 * 30, fetch)
+    time.sleep(REQUEST_DELAY)
+    return fetch()
 
 
 def get_team_defense_ratings(season: str = CURRENT_SEASON) -> pd.DataFrame:
@@ -339,8 +328,4 @@ def get_series_standings(season: str = CURRENT_SEASON) -> list[dict]:
         print(f"[series_standings] {len(results)} series (game results + today's schedule)")
         return results
 
-    return _cached(f"series_standings_{season}", 600, fetch)
-
-
-def clear_cache() -> None:
-    CACHE.clear()
+    return fetch()

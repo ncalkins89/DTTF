@@ -24,7 +24,6 @@ from src.db import init_db as _init_db
 _init_db()
 
 from src.data_fetcher import (
-    clear_cache,
     get_active_roster,
     get_player_game_logs,
     get_player_game_logs_365,
@@ -2061,7 +2060,7 @@ def update_actual(n_clicks, pick_key, actual_pra):
     prevent_initial_call=True,
 )
 def handle_clear_cache(n_clicks):
-    clear_cache()
+    _df_cache.clear()
     return "Cache cleared — reload the tab to refresh data."
 
 
