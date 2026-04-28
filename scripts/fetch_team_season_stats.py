@@ -37,7 +37,6 @@ def _fetch(season: str) -> list[tuple]:
         season=season,
         measure_type_detailed_defense="Advanced",
         season_type_all_star="Regular Season",
-        per_mode_simple="PerGame",
     ).league_dash_team_stats.get_data_frame()
 
     abbr_map = {t["id"]: t["abbreviation"] for t in nba_teams.get_teams()}

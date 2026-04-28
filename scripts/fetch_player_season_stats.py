@@ -38,7 +38,6 @@ def _fetch(season: str) -> list[tuple]:
         season=season,
         measure_type_detailed_defense="Advanced",
         season_type_all_star="Regular Season",
-        per_mode_simple="PerGame",
     ).league_dash_player_stats.get_data_frame()
 
     now = datetime.utcnow().isoformat()
