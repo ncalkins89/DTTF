@@ -6,6 +6,8 @@ from datetime import date, datetime, timezone
 from zoneinfo import ZoneInfo
 from pathlib import Path
 
+from src.blend import blend as blend_projections
+
 import dash_ag_grid as dag
 import dash_bootstrap_components as dbc
 import numpy as np
@@ -262,8 +264,7 @@ def build_todays_player_df(game_date: str | None = None, current_round: int = 1)
             likely_out = has_recent_games and de is None and de_loaded
 
             our_pra = proj["projected_pra"]
-            all_sources = [p for p in [our_pra, de_pra, fd_pra, playoff_avg] if p is not None]
-            pred_pra = round(sum(all_sources) / len(all_sources), 1)
+            pred_pra, pred_formula = blend_projections(our_pra, de_pra, fd_pra)
 
             lose_prob = (1.0 - series_win_prob) if series_win_prob is not None else None
             pred_urgency = round(pred_pra * lose_prob, 2) if lose_prob is not None else None
@@ -304,6 +305,7 @@ def build_todays_player_df(game_date: str | None = None, current_round: int = 1)
                 "Opp": opp_abbr,
                 "Status": status,
                 "Pred": pred_pra,
+                "Pred Formula": pred_formula,
                 "Our Proj": our_pra,
                 "DE Proj": de_pra if de_pra is not None else None,
                 "DE Pts": de["pts"] if de else None,
@@ -1077,7 +1079,7 @@ def _render_table_from_store(store_data, urgency_field):
          "sort": "desc",
          "cellStyle": {"function": "(params.data.Display_Status&&(params.data.Display_Status[0]==='✓'||params.data.Display_Status[0]==='❌')) ? {'fontWeight':'700','color':'#aaa','fontStyle':'italic','textDecoration':'line-through'} : {'fontWeight':'700','color': params.value > 25 ? '#16a34a' : params.value > 12 ? '#ca8a04' : '#dc2626'}"}},
         {"headerName": "Score Projection", "children": [
-            {"field": "Pred", "headerName": "Pred"},
+            {"field": "Pred", "headerName": "Pred", "tooltipField": "Pred Formula"},
             {"field": "Our Proj", "headerName": "Ours"},
             {"field": "DE Proj",  "headerName": "DE"},
             {"field": "FD Proj",  "headerName": "FD"},

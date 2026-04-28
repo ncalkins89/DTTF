@@ -311,8 +311,10 @@ def update_model_projections_snapshot(game_date: str, games: list[dict], season:
                     if not pl.empty:
                         pl_avg = round(pl["PRA"].mean(), 1)
 
-                sources = [p for p in [our_proj, de_pra, fd_pra, pl_avg] if p is not None]
-                pred_blended = round(sum(sources) / len(sources), 1) if sources else our_proj
+                from src.blend import blend as _blend
+                pred_blended, _ = _blend(our_proj, de_pra, fd_pra)
+                if pred_blended is None:
+                    pred_blended = our_proj
 
                 rows.append({
                     "player_id": pid,
@@ -367,6 +369,14 @@ def main() -> None:
         update_model_projections_snapshot(args.date, games, CURRENT_SEASON)
     else:
         print("\n[11] Model projections snapshot — skipped (no games or --skip-logs)")
+
+    # Step 12: re-fit blend weights from all available historical data
+    if not args.skip_logs:
+        _step(12, "Blend weights estimation")
+        from scripts.estimate_blend_weights import main as estimate_blend_weights
+        estimate_blend_weights()
+    else:
+        print("\n[12] Blend weights estimation — skipped (--skip-logs)")
 
     print("\n✓ Done. Open the dashboard: python3 src/dashboard.py")
 
