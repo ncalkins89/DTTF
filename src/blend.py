@@ -51,6 +51,8 @@ def blend(
     # Fallback: equal average
     avg = sum(vals[s] for s in available) / len(available)
     labels = {"our": "Ours", "de": "DE", "fd": "FD"}
-    pct = 100 // len(available)
-    formula = " + ".join(f"{pct}% {labels[s]}" for s in available)
+    n = len(available)
+    pcts = [100 // n] * n
+    pcts[-1] += 100 - sum(pcts)
+    formula = " + ".join(f"{pct}% {labels[s]}" for s, pct in zip(available, pcts))
     return round(avg, 1), formula

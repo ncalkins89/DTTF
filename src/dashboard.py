@@ -1034,6 +1034,7 @@ _DISPLAY_COLS = [
     "Pred", "Our Proj", "DE Proj", "DE Pts", "DE Reb", "DE Ast",
     "FD Proj", "FD Pts", "FD Reb", "FD Ast", "FD Min",
     "RS Avg", "PO Avg", "Ext Proj", "Series Win%",
+    "Pred Formula",
     "Urgency", "Urgency_Ours", "Urgency_DE", "Urgency_FD",
     "Exp Games", "Picked", "game_id", "series_win_prob_raw", "series_lose_prob_raw",
     "team_wins", "team_losses", "is_home",

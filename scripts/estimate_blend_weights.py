@@ -53,8 +53,13 @@ def _constrained_fit(X: np.ndarray, y: np.ndarray) -> np.ndarray:
 
 def _formula_str(sources: tuple, weights: np.ndarray) -> str:
     labels = {"our": "Ours", "de": "DE", "fd": "FD"}
-    parts = [f"{w * 100:.0f}% {labels[s]}" for s, w in zip(sources, weights) if w >= 0.005]
-    return " + ".join(parts)
+    shown = [(s, w) for s, w in zip(sources, weights) if w >= 0.005]
+    if not shown:
+        return ""
+    pcts = [round(w * 100) for _, w in shown]
+    # Adjust last term so percentages sum exactly to 100
+    pcts[-1] += 100 - sum(pcts)
+    return " + ".join(f"{pct}% {labels[s]}" for (s, _), pct in zip(shown, pcts))
 
 
 def _mae(pred: np.ndarray, actual: np.ndarray) -> float:
