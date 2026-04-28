@@ -10,3 +10,9 @@ diskcache>=5.6.3
 APScheduler>=3.10.0
 gunicorn>=21.0.0
 dash-ag-grid>=31.0.0
+# Model development (local only — not needed on Oracle for the live app)
+xgboost>=2.0.0
+scikit-learn>=1.4.0
+matplotlib>=3.8.0
+scipy>=1.12.0
+jupyter>=1.0.0

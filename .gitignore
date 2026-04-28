@@ -5,6 +5,7 @@
 # Data (personal picks + API cache — not committed)
 data/picks.json
 data/dttf.db
+data/dttf_local.db
 data/cache/
 
 # Derived / generated — can be rebuilt by running optimize_decay.py
