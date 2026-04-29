@@ -341,16 +341,27 @@ def build_todays_player_df(game_date: str | None = None, current_round: int = 1)
     if df.empty:
         return df
 
-    # Team commitment: picks used + total eligible per team
+    # Team commitment: picks used vs players who averaged ≥20 RS PRA
     history = get_pick_history()
     picks_per_team: dict[str, int] = {}
     for p in history:
         t = p.get("team_abbr", "")
         picks_per_team[t] = picks_per_team.get(t, 0) + 1
     all_playoff = _get_all_playoff_players()
+    from src.data_fetcher import CURRENT_SEASON
+    all_pids = [p["player_id"] for p in all_playoff]
+    logs_batch = db_get_all_game_logs_batch(all_pids, [CURRENT_SEASON])
+    pid_to_team = {p["player_id"]: p["team_abbr"] for p in all_playoff}
     total_per_team: dict[str, int] = {}
-    for p in all_playoff:
-        total_per_team[p["team_abbr"]] = total_per_team.get(p["team_abbr"], 0) + 1
+    for pid, team in pid_to_team.items():
+        logs = logs_batch.get((pid, CURRENT_SEASON))
+        if logs is not None and not logs.empty:
+            rs = logs[logs["SEASON_TYPE"] == "Regular Season"]
+            rs_avg = rs["PRA"].mean() if not rs.empty else 0
+        else:
+            rs_avg = 0
+        if rs_avg >= 20:
+            total_per_team[team] = total_per_team.get(team, 0) + 1
     df["team_picks_used"] = df["Team"].map(lambda t: picks_per_team.get(t, 0))
     df["team_total"] = df["Team"].map(lambda t: total_per_team.get(t, 1))
     df["team_color"] = df["Team"].map(lambda t: NBA_TEAM_COLORS.get(t, "#0071e3"))
