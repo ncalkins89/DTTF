@@ -12,11 +12,17 @@ SQLite persistence layer — all fetched data lives here.
   - team_defense_ratings  DEF_RATING per team/season (TTL 24h)
 """
 import sqlite3
+import unicodedata
 from contextlib import contextmanager
 from datetime import date, datetime
 from pathlib import Path
 
 DB_PATH = Path(__file__).parent.parent / "data" / "dttf.db"
+
+
+def _ascii_name(name: str) -> str:
+    """Strip diacritics so 'Luka Dončić' and 'Luka Doncic' both map to 'luka doncic'."""
+    return unicodedata.normalize("NFKD", name).encode("ascii", "ignore").decode().lower()
 
 
 def init_db() -> None:
@@ -574,7 +580,8 @@ def get_injuries() -> dict[str, dict]:
         rows = cx.execute(
             "SELECT player_name, status, comment FROM injuries"
         ).fetchall()
-    return {r["player_name"]: {"status": r["status"], "comment": r["comment"]} for r in rows}
+    # Keys are already ASCII-lowercased at upsert time; normalise defensively
+    return {_ascii_name(r["player_name"]): {"status": r["status"], "comment": r["comment"]} for r in rows}
 
 
 def upsert_model_projections(game_date: str, rows: list[dict]) -> None:

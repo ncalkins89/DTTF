@@ -22,7 +22,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 load_dotenv(Path(__file__).parent.parent / ".env")
 
 # Ensure DB tables exist (no-op if already created)
-from src.db import init_db as _init_db
+from src.db import init_db as _init_db, _ascii_name as _ascii_name
 _init_db()
 
 from src.data_fetcher import (
@@ -272,7 +272,7 @@ def build_todays_player_df(game_date: str | None = None, current_round: int = 1)
             urgency_de   = round(de_pra  * lose_prob, 2) if (de_pra  is not None and lose_prob is not None) else None
             urgency_fd   = round(fd_pra  * lose_prob, 2) if (fd_pra  is not None and lose_prob is not None) else None
 
-            inj = injuries.get(player["player_name"].lower(), {})
+            inj = injuries.get(_ascii_name(player["player_name"]), {})
             inj_status = inj.get("status", "")
             inj_comment = inj.get("comment", "")
             if inj_status == "Out":
