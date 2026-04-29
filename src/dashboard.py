@@ -454,7 +454,7 @@ def _today_layout():
         html.Div(id="subtab-scatter-pane", className="mt-3", style={"display": "none"}, children=[
             dbc.Card(dbc.CardBody([
                 dcc.Loading(
-                    dcc.Graph(id="scatter-chart", config={"displayModeBar": True},
+                    dcc.Graph(id="scatter-chart", config={"displayModeBar": True, "responsive": True},
                               style={"height": "420px"}),
                     type="circle", color="#0071e3", delay_show=0, style={"minHeight": "420px"},
                 ),
@@ -1409,10 +1409,13 @@ def patch_and_rerender_picks(_, store_data, urgency_field):
     Output("scatter-chart", "figure"),
     Input("today-data-store", "data"),
     Input("loading-sentinel", "children"),
+    Input("today-subtabs", "active_tab"),
 )
-def update_scatter_chart(store_data, _sentinel):
+def update_scatter_chart(store_data, _sentinel, active_subtab):
     empty = go.Figure()
     empty.update_layout(template="plotly_white", height=480)
+    if active_subtab != "subtab-scatter":
+        return dash.no_update
     if not store_data or not store_data.get("rows"):
         return empty
 
