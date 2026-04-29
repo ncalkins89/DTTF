@@ -543,7 +543,8 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Ar
 
 app = Dash(__name__,
            external_stylesheets=[dbc.themes.BOOTSTRAP],
-           suppress_callback_exceptions=True)
+           suppress_callback_exceptions=True,
+           assets_folder=str(Path(__file__).parent.parent / "assets"))
 app.title = "DTTF — Drive to the Finals"
 server = app.server  # gunicorn entry point — safe to have locally too
 
