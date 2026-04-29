@@ -8,8 +8,13 @@ import difflib
 import gzip
 import json
 import re
+import unicodedata
 import urllib.request
 from pathlib import Path
+
+
+def _ascii_name(name: str) -> str:
+    return unicodedata.normalize("NFKD", name).encode("ascii", "ignore").decode().lower()
 
 _DRAFTEDGE_URL = "https://draftedge.com/draftedge-data/nba_proj_dk.json"
 _HEADERS = {
@@ -37,13 +42,13 @@ def _parse_opp(html: str) -> str:
 
 
 def _build_name_map() -> dict[str, int]:
-    """Lowercase player name → player_id from NBA API static list."""
+    """ASCII-normalized player name → player_id from NBA API static list."""
     from nba_api.stats.static import players as nba_players
-    return {p["full_name"].lower(): p["id"] for p in nba_players.get_players()}
+    return {_ascii_name(p["full_name"]): p["id"] for p in nba_players.get_players()}
 
 
 def _fuzzy_match(name: str, name_map: dict[str, int]) -> int | None:
-    key = name.lower()
+    key = _ascii_name(name)
     if key in name_map:
         return name_map[key]
     matches = difflib.get_close_matches(key, name_map.keys(), n=1, cutoff=0.82)

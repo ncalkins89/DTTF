@@ -561,7 +561,7 @@ def get_fd_projections(game_date: str) -> dict[int, dict]:
 def upsert_injuries(injuries: dict[str, dict]) -> None:
     now = datetime.utcnow().isoformat()
     rows = [
-        {"player_name": name, "status": v.get("status", ""),
+        {"player_name": _ascii_name(name), "status": v.get("status", ""),
          "comment": v.get("comment", ""), "fetched_at": now}
         for name, v in injuries.items()
     ]
