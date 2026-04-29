@@ -1038,6 +1038,7 @@ _DISPLAY_COLS = [
     "Urgency", "Urgency_Ours", "Urgency_DE", "Urgency_FD",
     "Exp Games", "Picked", "game_id", "series_win_prob_raw", "series_lose_prob_raw",
     "team_wins", "team_losses", "is_home",
+    "team_picks_used", "team_total", "team_color",
 ]
 
 
