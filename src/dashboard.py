@@ -641,11 +641,11 @@ def _leaderboard_layout():
                     dbc.Select(
                         id="leaderboard-expected-source",
                         options=[
-                            {"label": "Our model (blended)", "value": "our_pred"},
-                            {"label": "Playoff avg",         "value": "playoff_avg"},
-                            {"label": "RS avg",              "value": "rs_avg"},
+                            {"label": "DraftEdge projection", "value": "de_proj"},
+                            {"label": "Playoff avg",          "value": "playoff_avg"},
+                            {"label": "RS avg (2025-26)",     "value": "rs_avg"},
                         ],
-                        value="our_pred",
+                        value="de_proj",
                         style={"fontSize": "13px", "width": "210px"},
                     ),
                     width="auto",
@@ -1860,12 +1860,8 @@ def update_leaderboard_chart(active_tab, highlight_user):
         xaxis=dict(title=None, tickfont=dict(size=14), gridcolor="#f0f0f0"),
         yaxis=dict(title="Cumulative PRA", title_font=dict(size=14),
                    tickfont=dict(size=14), gridcolor="#f0f0f0"),
-        legend=dict(
-            orientation="v", x=1.01, y=1,
-            font=dict(size=12), itemsizing="constant",
-            tracegroupgap=2,
-        ) if not highlight_user else dict(visible=False),
-        margin=dict(l=55, r=180, t=20, b=40),
+        legend=dict(visible=False),
+        margin=dict(l=55, r=40, t=20, b=40),
         hovermode="x unified",
         plot_bgcolor="white",
         paper_bgcolor="white",
@@ -1883,6 +1879,7 @@ def update_leaderboard_chart(active_tab, highlight_user):
 )
 def update_leaderboard_scatter(active_tab, highlight_user, expected_source):
     from plotly.subplots import make_subplots
+    import sqlite3 as _sqlite3
 
     def _empty(msg="Select an entrant above"):
         fig = go.Figure()
@@ -1898,7 +1895,9 @@ def update_leaderboard_scatter(active_tab, highlight_user, expected_source):
     if not highlight_user:
         return _empty()
 
-    from src.db import get_league_picks, get_model_projections
+    from src.db import get_league_picks, DB_PATH
+    from src.data_fetcher import CURRENT_SEASON
+
     picks = get_league_picks()
     if not picks:
         return _empty("No picks data")
@@ -1908,77 +1907,156 @@ def update_leaderboard_scatter(active_tab, highlight_user, expected_source):
     if df.empty:
         return _empty("No scored picks yet")
 
-    expected_source = expected_source or "our_pred"
+    expected_source = expected_source or "de_proj"
 
-    # ── Build expected-PRA lookup ──────────────────────────────────────────
-    # Key: (game_date, player_id) or fallback by last-name + date
-    from src.data_fetcher import CURRENT_SEASON
+    # ── Inline player_id resolution ────────────────────────────────────────
+    # Strategy (in priority order):
+    #   1. Stored player_id in DB
+    #   2. game_logs match: last_name + game_date + PRA (high confidence)
+    #   3. schedule filter: last_name candidates narrowed by teams playing that day
+    #   4. Roster-only: last_name if unique across all rosters
 
-    expected: list[float | None] = []
-    labels:   list[str] = []
+    try:
+        cx = _sqlite3.connect(str(DB_PATH))
+        cx.row_factory = _sqlite3.Row
 
-    for _, row in df.iterrows():
-        pid      = row.get("player_id")
-        gdate    = str(row["game_date"])[:10]
-        raw_name = row.get("player_name") or ""
+        # Build last_name → [(pid, full_name)] from rosters
+        all_players = cx.execute(
+            "SELECT DISTINCT player_id, player_name FROM rosters"
+        ).fetchall()
+        last_name_map: dict[str, list] = {}
+        for r in all_players:
+            parts = r["player_name"].split()
+            if parts:
+                last = _ascii_name(parts[-1])
+                last_name_map.setdefault(last, []).append(
+                    (r["player_id"], r["player_name"])
+                )
 
-        exp_pra = None
+        # Build team_id → abbr
+        from nba_api.stats.static import teams as _nba_teams
+        _TMAP = {t["id"]: t["abbreviation"] for t in _nba_teams.get_teams()}
 
-        if expected_source == "our_pred":
+        def _resolve(last: str, game_date: str, pra_scored) -> int | None:
+            candidates = last_name_map.get(_ascii_name(last), [])
+            if not candidates:
+                return None
+            if len(candidates) == 1:
+                return candidates[0][0]
+            pids = [c[0] for c in candidates]
+            ph = ",".join("?" * len(pids))
+            # 1. game_log exact PRA match
+            if pra_scored is not None:
+                rows = cx.execute(
+                    f"SELECT player_id, pra FROM game_logs WHERE game_date=? AND player_id IN ({ph})",
+                    [game_date, *pids],
+                ).fetchall()
+                gl_matches = [r["player_id"] for r in rows
+                              if r["pra"] is not None and round(float(r["pra"])) == int(pra_scored)]
+                if len(gl_matches) == 1:
+                    return gl_matches[0]
+            # 2. schedule filter (only teams playing that day)
+            sched = cx.execute(
+                "SELECT home_team_abbr, away_team_abbr FROM schedule WHERE game_date=?",
+                (game_date,),
+            ).fetchall()
+            teams_on = set()
+            for g in sched:
+                teams_on.add(g["home_team_abbr"])
+                teams_on.add(g["away_team_abbr"])
+            if teams_on:
+                sched_filtered = []
+                for pid, pname in candidates:
+                    t_row = cx.execute(
+                        "SELECT team_id FROM rosters WHERE player_id=? ORDER BY fetched_at DESC LIMIT 1",
+                        (pid,),
+                    ).fetchone()
+                    if t_row and _TMAP.get(t_row["team_id"]) in teams_on:
+                        sched_filtered.append(pid)
+                if len(sched_filtered) == 1:
+                    return sched_filtered[0]
+            return None
+
+        resolved_pids: list[int | None] = []
+        for _, row in df.iterrows():
+            pid = row.get("player_id")
             if pid:
-                mrows = get_model_projections(gdate)
-                m = next((r for r in mrows if r["player_id"] == pid), None)
-                if m:
-                    exp_pra = m.get("pred_blended") or m.get("our_proj")
-            if exp_pra is None and not pid:
-                # Try last-name match against model_projections for that date
-                mrows = get_model_projections(gdate)
-                last_ascii = _ascii_name(raw_name.split()[-1]) if raw_name else ""
-                matches = [r for r in mrows
-                           if _ascii_name((r.get("player_name") or "").split()[-1]) == last_ascii]
-                if len(matches) == 1:
-                    exp_pra = matches[0].get("pred_blended") or matches[0].get("our_proj")
+                resolved_pids.append(int(pid))
+            else:
+                resolved_pids.append(
+                    _resolve(
+                        row.get("player_name") or "",
+                        str(row["game_date"])[:10],
+                        row.get("pra_scored"),
+                    )
+                )
 
-        elif expected_source in ("playoff_avg", "rs_avg"):
-            if pid:
-                logs, _ = db_get_game_logs(pid, CURRENT_SEASON)
-                if not logs.empty:
-                    stype = "Playoffs" if expected_source == "playoff_avg" else "Regular Season"
-                    seg = logs[
-                        (logs["SEASON_TYPE"] == stype) &
-                        (logs["GAME_DATE"] < pd.Timestamp(gdate))
-                    ]
-                    if not seg.empty:
-                        exp_pra = float(seg["PRA"].mean())
+        # ── Build expected values ──────────────────────────────────────────
+        expected: list[float | None] = []
+        for i, (_, row) in enumerate(df.iterrows()):
+            pid   = resolved_pids[i]
+            gdate = str(row["game_date"])[:10]
+            exp_pra = None
 
-        expected.append(exp_pra)
-        labels.append(raw_name)
+            if expected_source == "de_proj" and pid:
+                de = cx.execute(
+                    "SELECT pra FROM de_projections WHERE player_id=? AND date=?",
+                    (pid, gdate),
+                ).fetchone()
+                if de and de["pra"] is not None:
+                    exp_pra = float(de["pra"])
 
-    # Filter to rows where expected is available
-    actual_vals = []
+            elif expected_source == "rs_avg" and pid:
+                r = cx.execute(
+                    "SELECT AVG(pra) as a FROM game_logs "
+                    "WHERE player_id=? AND season=? AND season_type='Regular Season'",
+                    (pid, CURRENT_SEASON),
+                ).fetchone()
+                if r and r["a"] is not None:
+                    exp_pra = float(r["a"])
+
+            elif expected_source == "playoff_avg" and pid:
+                r = cx.execute(
+                    "SELECT AVG(pra) as a FROM game_logs "
+                    "WHERE player_id=? AND season=? AND season_type='Playoffs' AND game_date<?",
+                    (pid, CURRENT_SEASON, gdate),
+                ).fetchone()
+                if r and r["a"] is not None:
+                    exp_pra = float(r["a"])
+
+            expected.append(exp_pra)
+
+        cx.close()
+    except Exception as exc:
+        return _empty(f"DB error: {exc}")
+
+    # ── Collect plottable points ───────────────────────────────────────────
     exp_vals    = []
+    actual_vals = []
     hover_names = []
     game_dates  = []
     for i, (_, row) in enumerate(df.iterrows()):
         if expected[i] is not None:
-            actual_vals.append(float(row["pra_scored"]))
             exp_vals.append(expected[i])
-            hover_names.append(labels[i])
+            actual_vals.append(float(row["pra_scored"]))
+            hover_names.append(row.get("player_name") or "?")
             game_dates.append(str(row["game_date"])[:10])
 
-    if not actual_vals:
-        return _empty("No expected-PRA data for this source")
+    if not exp_vals:
+        src_label = {"de_proj": "DraftEdge", "rs_avg": "RS avg", "playoff_avg": "playoff avg"}
+        return _empty(f"No {src_label.get(expected_source, expected_source)} data for these picks")
 
-    # Color by deviation: green = over-performed, red = under-performed
+    # Deviation: positive = over-performed (actual > expected)
     diff = [a - e for a, e in zip(actual_vals, exp_vals)]
     max_abs = max(abs(d) for d in diff) or 1
     colors = [
-        f"rgba(22,163,74,{min(0.3 + abs(d) / max_abs * 0.7, 1.0):.2f})" if d >= 0
-        else f"rgba(220,38,38,{min(0.3 + abs(d) / max_abs * 0.7, 1.0):.2f})"
+        f"rgba(22,163,74,{min(0.3 + abs(d)/max_abs*0.7, 1.0):.2f})" if d >= 0
+        else f"rgba(220,38,38,{min(0.3 + abs(d)/max_abs*0.7, 1.0):.2f})"
         for d in diff
     ]
 
-    # ── Build figure with marginal histograms ─────────────────────────────
+    # ── Figure with marginal histograms ───────────────────────────────────
+    # Layout: expected on x-axis, actual on y-axis
     fig = make_subplots(
         rows=2, cols=2,
         column_widths=[0.82, 0.18],
@@ -1989,56 +2067,52 @@ def update_leaderboard_scatter(active_tab, highlight_user, expected_source):
         vertical_spacing=0.01,
     )
 
-    # Top marginal histogram (actual PRA distribution)
+    # Top marginal: expected score distribution
     fig.add_trace(
-        go.Histogram(
-            x=actual_vals, nbinsx=12,
-            marker_color="#0071e3", opacity=0.5, showlegend=False,
-        ),
+        go.Histogram(x=exp_vals, nbinsx=10, marker_color="#ca8a04",
+                     opacity=0.55, showlegend=False),
         row=1, col=1,
     )
-
-    # Right marginal histogram (expected PRA distribution, rotated)
+    # Right marginal: actual score distribution
     fig.add_trace(
-        go.Histogram(
-            y=exp_vals, nbinsy=12,
-            marker_color="#ca8a04", opacity=0.5, showlegend=False,
-        ),
+        go.Histogram(y=actual_vals, nbinsy=10, marker_color="#0071e3",
+                     opacity=0.55, showlegend=False),
         row=2, col=2,
     )
 
-    # 45-degree reference line (y = x)
-    lo = min(min(actual_vals), min(exp_vals)) - 2
-    hi = max(max(actual_vals), max(exp_vals)) + 2
+    # 45° reference line (y = x → actual = expected)
+    lo = min(min(exp_vals), min(actual_vals)) - 3
+    hi = max(max(exp_vals), max(actual_vals)) + 3
     fig.add_trace(
-        go.Scatter(
-            x=[lo, hi], y=[lo, hi],
-            mode="lines",
-            line=dict(color="#888", width=1, dash="dot"),
-            showlegend=False, hoverinfo="skip",
-        ),
+        go.Scatter(x=[lo, hi], y=[lo, hi], mode="lines",
+                   line=dict(color="#aaa", width=1, dash="dot"),
+                   showlegend=False, hoverinfo="skip"),
         row=2, col=1,
     )
 
-    # Main scatter
+    # Main scatter (x=expected, y=actual)
     hover_texts = [
-        f"<b>{n}</b><br>Actual: {a:.0f} | Expected: {e:.1f}<br>{d:+.1f} ({g})"
-        for n, a, e, d, g in zip(hover_names, actual_vals, exp_vals, diff, game_dates)
+        f"<b>{n}</b><br>Expected: {e:.1f} | Actual: {a:.0f}<br>{d:+.1f} ({g})"
+        for n, e, a, d, g in zip(hover_names, exp_vals, actual_vals, diff, game_dates)
     ]
     fig.add_trace(
         go.Scatter(
-            x=actual_vals, y=exp_vals,
-            mode="markers",
+            x=exp_vals, y=actual_vals,
+            mode="markers+text",
             marker=dict(color=colors, size=11, line=dict(color="#333", width=0.5)),
-            text=hover_texts,
-            hovertemplate="%{text}<extra></extra>",
+            text=hover_names,
+            textposition="top center",
+            textfont=dict(size=10, color="#555"),
+            customdata=list(zip(hover_texts)),
+            hovertemplate="%{customdata[0]}<extra></extra>",
             showlegend=False,
         ),
         row=2, col=1,
     )
 
-    source_label = {"our_pred": "Our pred (blended)", "playoff_avg": "Playoff avg",
-                    "rs_avg": "RS avg"}.get(expected_source, expected_source)
+    source_labels = {"de_proj": "DraftEdge", "playoff_avg": "Playoff avg",
+                     "rs_avg": "RS avg (2025-26)"}
+    src_lbl = source_labels.get(expected_source, expected_source)
 
     fig.update_layout(
         template="plotly_white",
@@ -2049,8 +2123,10 @@ def update_leaderboard_scatter(active_tab, highlight_user, expected_source):
         hovermode="closest",
         font=dict(family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif", size=13),
     )
-    fig.update_xaxes(title_text="Actual PRA", row=2, col=1, gridcolor="#f0f0f0")
-    fig.update_yaxes(title_text=f"Expected PRA ({source_label})", row=2, col=1, gridcolor="#f0f0f0")
+    fig.update_xaxes(title_text=f"Expected score ({src_lbl})", row=2, col=1,
+                     gridcolor="#f0f0f0", title_font=dict(size=12))
+    fig.update_yaxes(title_text="Actual score", row=2, col=1,
+                     gridcolor="#f0f0f0", title_font=dict(size=12))
     fig.update_xaxes(showticklabels=False, row=1, col=1)
     fig.update_yaxes(showticklabels=False, row=2, col=2)
     return fig
