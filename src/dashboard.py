@@ -486,6 +486,7 @@ def _today_layout():
                         width=4,
                     ),
                 ], className="mb-3"),
+                html.Div(id="leaderboard-stats", className="mb-3"),
                 dcc.Loading(
                     dcc.Graph(id="leaderboard-chart",
                               config={"displayModeBar": False, "responsive": True},
@@ -1659,6 +1660,81 @@ def populate_leaderboard_dropdown(active_subtab):
         seen[p["username"]] = p["entry_name"] or p["username"]
     return [{"label": f"{entry} ({user})", "value": user}
             for user, entry in sorted(seen.items(), key=lambda x: x[1].lower())]
+
+
+@app.callback(
+    Output("leaderboard-stats", "children"),
+    Input("leaderboard-highlight-dropdown", "value"),
+    Input("today-subtabs", "active_tab"),
+)
+def update_leaderboard_stats(highlight_user, active_subtab):
+    if active_subtab != "subtab-leaderboard" or not highlight_user:
+        return []
+
+    from src.db import get_league_picks
+    import math
+    picks = get_league_picks()
+    if not picks:
+        return []
+
+    df = pd.DataFrame(picks)
+    df = df[df["pra_scored"].notna()].copy()
+    df["game_date"] = pd.to_datetime(df["game_date"])
+    dates = sorted(df["game_date"].unique())
+
+    pivot   = df.pivot_table(index="game_date", columns="username",
+                              values="pra_scored", aggfunc="sum").reindex(dates).fillna(0)
+    cumsum  = pivot.cumsum()
+    n_users = len(cumsum.columns)
+
+    # Current standings (latest date)
+    final   = cumsum.iloc[-1]
+    ranked  = final.rank(method="min", ascending=False).astype(int)
+    money_n = math.ceil(0.15 * n_users)
+    money_cutoff = float(final.nlargest(money_n).iloc[-1])
+
+    if highlight_user not in final.index:
+        return []
+
+    current_pts  = int(final[highlight_user])
+    current_rank = int(ranked[highlight_user])
+    leader_pts   = int(final.max())
+
+    # Best rank across all dates
+    best_rank = current_rank
+    for _, day_row in cumsum.iterrows():
+        day_ranked = day_row.rank(method="min", ascending=False).astype(int)
+        if highlight_user in day_ranked.index:
+            best_rank = min(best_rank, int(day_ranked[highlight_user]))
+
+    behind_1st   = leader_pts - current_pts
+    behind_money = money_cutoff - current_pts
+
+    def _stat(label, value, highlight=False):
+        color = "#16a34a" if highlight else "#1d1d1f"
+        return html.Div([
+            html.Div(label, style={"fontSize": "10px", "color": "#8e8e93",
+                                   "textTransform": "uppercase", "letterSpacing": "0.5px",
+                                   "marginBottom": "2px"}),
+            html.Div(value, style={"fontSize": "20px", "fontWeight": "700", "color": color}),
+        ], style={"textAlign": "center", "minWidth": "90px"})
+
+    in_money = behind_money <= 0
+    money_val = "✓ In money" if in_money else f"–{int(behind_money)}"
+    money_highlight = in_money
+
+    return html.Div([
+        _stat("Points",      f"{current_pts:,}"),
+        html.Div(style={"width": "1px", "background": "#e5e5ea", "margin": "0 12px"}),
+        _stat("Rank",        f"#{current_rank}"),
+        html.Div(style={"width": "1px", "background": "#e5e5ea", "margin": "0 12px"}),
+        _stat("Best Rank",   f"#{best_rank}"),
+        html.Div(style={"width": "1px", "background": "#e5e5ea", "margin": "0 12px"}),
+        _stat("Behind 1st",  f"–{behind_1st}" if behind_1st > 0 else "Leader"),
+        html.Div(style={"width": "1px", "background": "#e5e5ea", "margin": "0 12px"}),
+        _stat(f"Money (top {money_n})", money_val, highlight=money_highlight),
+    ], style={"display": "flex", "alignItems": "center", "background": "#f5f5f7",
+              "borderRadius": "10px", "padding": "12px 20px", "width": "fit-content"})
 
 
 @app.callback(
