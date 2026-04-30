@@ -743,6 +743,8 @@ def render_schedule_strip(store_data, _sentinel):
 
     seen = set()
     chips = []
+    is_future = game_date and str(game_date)[:10] > today_pt().isoformat()
+    is_past   = game_date and str(game_date)[:10] < today_pt().isoformat()
     # home rows have is_home=True; use them to build each chip
     home_rows = df[df["is_home"] == True].drop_duplicates("game_id")
     for _, r in home_rows.iterrows():
@@ -751,8 +753,6 @@ def render_schedule_strip(store_data, _sentinel):
             continue
         seen.add(gid)
         home = r["Team"]; away = r["Opp"]
-        home_p = r["series_win_prob_raw"]
-        away_p = round(1 - home_p, 3)
         home_w = r["team_wins"]; home_l = r["team_losses"]
         # away record is the inverse
         away_row = df[(df["game_id"] == gid) & (df["is_home"] == False)]
@@ -762,7 +762,19 @@ def render_schedule_strip(store_data, _sentinel):
         else:
             away_w, away_l = home_l, home_w  # fallback
 
-        is_past = game_date and str(game_date)[:10] < today_pt().isoformat()
+        series_decided = home_w >= 4 or away_w >= 4
+        # Hide future games from a series that's already over
+        if series_decided and (is_future or str(game_date)[:10] >= today_pt().isoformat()):
+            continue
+
+        # Override odds for completed series
+        if series_decided:
+            home_p = 1.0 if home_w >= 4 else 0.0
+            away_p = 1.0 - home_p
+        else:
+            home_p = r["series_win_prob_raw"]
+            away_p = round(1 - home_p, 3)
+
         if is_past:
             game_num = home_w + away_w
         else:
