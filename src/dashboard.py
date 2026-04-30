@@ -490,8 +490,8 @@ def _today_layout():
                 dcc.Loading(
                     dcc.Graph(id="leaderboard-chart",
                               config={"displayModeBar": False, "responsive": True},
-                              style={"height": "520px"}),
-                    type="circle", color="#0071e3", delay_show=0, style={"minHeight": "520px"},
+                              style={"height": "380px"}),
+                    type="circle", color="#0071e3", delay_show=0, style={"minHeight": "380px"},
                 ),
             ])),
         ]),
@@ -1711,30 +1711,35 @@ def update_leaderboard_stats(highlight_user, active_subtab):
     behind_money = money_cutoff - current_pts
 
     def _stat(label, value, highlight=False):
-        color = "#16a34a" if highlight else "#1d1d1f"
+        val_color = "#16a34a" if highlight else "#1d1d1f"
         return html.Div([
-            html.Div(label, style={"fontSize": "10px", "color": "#8e8e93",
-                                   "textTransform": "uppercase", "letterSpacing": "0.5px",
-                                   "marginBottom": "2px"}),
-            html.Div(value, style={"fontSize": "20px", "fontWeight": "700", "color": color}),
-        ], style={"textAlign": "center", "minWidth": "90px"})
+            html.Div(label, style={"fontSize": "11px", "color": "#555", "fontWeight": "500",
+                                   "textTransform": "uppercase", "letterSpacing": "0.4px",
+                                   "marginBottom": "4px"}),
+            html.Div(value, style={"fontSize": "22px", "fontWeight": "700", "color": val_color,
+                                   "lineHeight": "1"}),
+        ], style={"textAlign": "center", "minWidth": "100px", "padding": "0 4px"})
 
-    in_money = behind_money <= 0
-    money_val = "✓ In money" if in_money else f"–{int(behind_money)}"
-    money_highlight = in_money
+    divider = html.Div(style={"width": "1px", "alignSelf": "stretch",
+                               "background": "#d2d2d7", "margin": "0 16px"})
+
+    in_money  = behind_money <= 0
+    money_val = "In the money" if in_money else f"+{int(behind_money)}"
 
     return html.Div([
-        _stat("Points",      f"{current_pts:,}"),
-        html.Div(style={"width": "1px", "background": "#e5e5ea", "margin": "0 12px"}),
-        _stat("Rank",        f"#{current_rank}"),
-        html.Div(style={"width": "1px", "background": "#e5e5ea", "margin": "0 12px"}),
-        _stat("Best Rank",   f"#{best_rank}"),
-        html.Div(style={"width": "1px", "background": "#e5e5ea", "margin": "0 12px"}),
-        _stat("Behind 1st",  f"–{behind_1st}" if behind_1st > 0 else "Leader"),
-        html.Div(style={"width": "1px", "background": "#e5e5ea", "margin": "0 12px"}),
-        _stat(f"Money (top {money_n})", money_val, highlight=money_highlight),
-    ], style={"display": "flex", "alignItems": "center", "background": "#f5f5f7",
-              "borderRadius": "10px", "padding": "12px 20px", "width": "fit-content"})
+        _stat("Points",           f"{current_pts:,}"),
+        divider,
+        _stat("Rank",             f"{current_rank} / {n_users}"),
+        divider,
+        _stat("Best Rank",        f"{best_rank} / {n_users}"),
+        divider,
+        _stat("Pts from 1st",     "0" if behind_1st == 0 else f"+{behind_1st}"),
+        divider,
+        _stat("Pts from the money", money_val, highlight=in_money),
+    ], style={"display": "flex", "alignItems": "center", "background": "#fff",
+              "border": "1px solid #d2d2d7", "borderRadius": "12px",
+              "padding": "14px 24px", "width": "fit-content",
+              "boxShadow": "0 1px 4px rgba(0,0,0,.07)"})
 
 
 @app.callback(
@@ -1814,19 +1819,21 @@ def update_leaderboard_chart(active_subtab, highlight_user):
 
     fig.update_layout(
         template="plotly_white",
-        height=520,
-        xaxis=dict(title=None, tickfont=dict(size=12), gridcolor="#f0f0f0"),
-        yaxis=dict(title="Cumulative PRA", tickfont=dict(size=12), gridcolor="#f0f0f0"),
+        height=380,
+        xaxis=dict(title=None, tickfont=dict(size=14), gridcolor="#f0f0f0"),
+        yaxis=dict(title="Cumulative PRA", title_font=dict(size=14),
+                   tickfont=dict(size=14), gridcolor="#f0f0f0"),
         legend=dict(
             orientation="v", x=1.01, y=1,
-            font=dict(size=11), itemsizing="constant",
+            font=dict(size=12), itemsizing="constant",
             tracegroupgap=2,
         ) if not highlight_user else dict(visible=False),
-        margin=dict(l=50, r=180, t=20, b=40),
+        margin=dict(l=55, r=180, t=20, b=40),
         hovermode="x unified",
         plot_bgcolor="white",
         paper_bgcolor="white",
-        font=dict(family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"),
+        font=dict(family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
+                  size=14),
     )
     return fig
 
