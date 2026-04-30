@@ -378,9 +378,10 @@ def _today_layout():
     return html.Div([
         # ── Sub-tabs ────────────────────────────────────────────────────
         dbc.Tabs(id="today-subtabs", active_tab="subtab-players", className="mt-1", children=[
-            dbc.Tab(label="Browse Players", tab_id="subtab-players"),
-            dbc.Tab(label="Player Scatter", tab_id="subtab-scatter"),
+            dbc.Tab(label="Browse Players",  tab_id="subtab-players"),
+            dbc.Tab(label="Player Scatter",  tab_id="subtab-scatter"),
             dbc.Tab(label="Compare Players", tab_id="subtab-compare"),
+            dbc.Tab(label="Leaderboard",     tab_id="subtab-leaderboard"),
         ]),
 
         # ── Date strip (NBA scoreboard style) ───────────────────────────
@@ -469,6 +470,29 @@ def _today_layout():
                     type="circle", color="#0071e3", delay_show=0, style={"minHeight": "420px"},
                 ),
             ], style={"padding": "10px 12px"})),
+        ]),
+
+        # ── Leaderboard subtab ──────────────────────────────────────────
+        html.Div(id="subtab-leaderboard-pane", className="mt-3", style={"display": "none"}, children=[
+            dbc.Card(dbc.CardBody([
+                dbc.Row([
+                    dbc.Col(
+                        dcc.Dropdown(
+                            id="leaderboard-highlight-dropdown",
+                            placeholder="Highlight an entrant...",
+                            style={"fontSize": "13px"},
+                            clearable=True,
+                        ),
+                        width=4,
+                    ),
+                ], className="mb-3"),
+                dcc.Loading(
+                    dcc.Graph(id="leaderboard-chart",
+                              config={"displayModeBar": False, "responsive": True},
+                              style={"height": "520px"}),
+                    type="circle", color="#0071e3", delay_show=0, style={"minHeight": "520px"},
+                ),
+            ])),
         ]),
 
         # ── Compare Players subtab ───────────────────────────────────────
@@ -1023,15 +1047,17 @@ def toggle_history_subtabs(subtab):
     Output("subtab-players-pane", "style"),
     Output("subtab-scatter-pane", "style"),
     Output("subtab-compare-pane", "style"),
+    Output("subtab-leaderboard-pane", "style"),
     Input("today-subtabs", "active_tab"),
 )
 def toggle_subtabs(subtab):
     show = {"display": "block"}
     hide = {"display": "none"}
     return (
-        show if subtab == "subtab-players" else hide,
-        show if subtab == "subtab-scatter" else hide,
-        show if subtab == "subtab-compare" else hide,
+        show if subtab == "subtab-players"     else hide,
+        show if subtab == "subtab-scatter"     else hide,
+        show if subtab == "subtab-compare"     else hide,
+        show if subtab == "subtab-leaderboard" else hide,
     )
 
 
@@ -1598,6 +1624,122 @@ def update_scatter_chart(store_data, _sentinel, active_subtab):
         font=dict(family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"),
     )
 
+    return fig
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# TAB 1d: Leaderboard (cumulative PRA by entrant)
+# ═══════════════════════════════════════════════════════════════════════════
+
+@app.callback(
+    Output("leaderboard-highlight-dropdown", "options"),
+    Input("today-subtabs", "active_tab"),
+)
+def populate_leaderboard_dropdown(active_subtab):
+    if active_subtab != "subtab-leaderboard":
+        return dash.no_update
+    from src.db import get_league_picks
+    picks = get_league_picks()
+    if not picks:
+        return []
+    seen = {}
+    for p in picks:
+        seen[p["username"]] = p["entry_name"] or p["username"]
+    return [{"label": f"{entry} ({user})", "value": user}
+            for user, entry in sorted(seen.items(), key=lambda x: x[1].lower())]
+
+
+@app.callback(
+    Output("leaderboard-chart", "figure"),
+    Input("today-subtabs", "active_tab"),
+    Input("leaderboard-highlight-dropdown", "value"),
+)
+def update_leaderboard_chart(active_subtab, highlight_user):
+    empty = go.Figure()
+    empty.update_layout(template="plotly_white", height=520)
+    if active_subtab != "subtab-leaderboard":
+        return dash.no_update
+
+    from src.db import get_league_picks
+    picks = get_league_picks()
+    if not picks:
+        return empty
+
+    df = pd.DataFrame(picks)
+    df = df[df["pra_scored"].notna()].copy()
+    df["game_date"] = pd.to_datetime(df["game_date"])
+    df = df.sort_values("game_date")
+
+    # Build cumulative sum per entrant
+    dates = sorted(df["game_date"].unique())
+    users = df["username"].unique()
+
+    # For each user, fill in 0 for dates they have no pick, then cumsum
+    pivot = df.pivot_table(index="game_date", columns="username",
+                           values="pra_scored", aggfunc="sum").reindex(dates).fillna(0)
+    cumsum = pivot.cumsum()
+
+    # Final scores for ranking
+    final = cumsum.iloc[-1].sort_values(ascending=False)
+    user_to_entry = {p["username"]: p["entry_name"] or p["username"] for p in picks}
+
+    fig = go.Figure()
+
+    for i, user in enumerate(final.index):
+        is_highlight = (user == highlight_user)
+        label = user_to_entry.get(user, user)
+        y_vals = cumsum[user].values
+        x_vals = [d.strftime("%b %-d") for d in dates]
+
+        if is_highlight:
+            line = dict(width=3, color="#0071e3")
+            opacity = 1.0
+            z = 10
+        else:
+            line = dict(width=1, color="#c8c8c8" if highlight_user else "#aaa")
+            opacity = 0.35 if highlight_user else 0.6
+            z = 1
+
+        fig.add_trace(go.Scatter(
+            x=x_vals,
+            y=y_vals,
+            mode="lines",
+            name=label,
+            line=line,
+            opacity=opacity,
+            zorder=z,
+            showlegend=is_highlight or not highlight_user,
+            hovertemplate=f"<b>{label}</b><br>%{{x}}: %{{y}} cumulative PRA<extra></extra>",
+        ))
+
+        # Endpoint label for highlighted or top-5 when no highlight
+        show_label = is_highlight or (not highlight_user and i < 5)
+        if show_label:
+            fig.add_annotation(
+                x=x_vals[-1],
+                y=float(y_vals[-1]),
+                text=f" {label} ({int(y_vals[-1])})",
+                showarrow=False,
+                xanchor="left",
+                font=dict(size=11, color="#0071e3" if is_highlight else "#555"),
+            )
+
+    fig.update_layout(
+        template="plotly_white",
+        height=520,
+        xaxis=dict(title=None, tickfont=dict(size=12), gridcolor="#f0f0f0"),
+        yaxis=dict(title="Cumulative PRA", tickfont=dict(size=12), gridcolor="#f0f0f0"),
+        legend=dict(
+            orientation="v", x=1.01, y=1,
+            font=dict(size=11), itemsizing="constant",
+            tracegroupgap=2,
+        ) if not highlight_user else dict(visible=False),
+        margin=dict(l=50, r=180, t=20, b=40),
+        hovermode="x unified",
+        plot_bgcolor="white",
+        paper_bgcolor="white",
+        font=dict(family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"),
+    )
     return fig
 
 
