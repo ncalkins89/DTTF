@@ -160,10 +160,16 @@ def init_db() -> None:
             entry_name  TEXT,
             player_name TEXT,
             pra_scored  INTEGER,
+            player_id   INTEGER,
             fetched_at  TEXT NOT NULL,
             PRIMARY KEY (username, game_date)
         );
         """)
+        # Migration: add player_id column if it doesn't exist yet
+        try:
+            cx.execute("ALTER TABLE league_picks ADD COLUMN player_id INTEGER")
+        except Exception:
+            pass  # column already exists
 
 
 @contextmanager
@@ -670,15 +676,15 @@ def get_last_updated(game_date: str) -> str | None:
 
 def upsert_league_picks(rows: list[dict]) -> None:
     """Upsert rows from playoffpicker.com scrape.
-    Each row: {username, game_date, entry_name, player_name, pra_scored}
+    Each row: {username, game_date, entry_name, player_name, pra_scored, player_id (optional)}
     """
     now = datetime.utcnow().isoformat()
     with _conn() as cx:
         cx.executemany(
             """INSERT OR REPLACE INTO league_picks
-               (username, game_date, entry_name, player_name, pra_scored, fetched_at)
-               VALUES (:username, :game_date, :entry_name, :player_name, :pra_scored, :fetched_at)""",
-            [{**r, "fetched_at": now} for r in rows],
+               (username, game_date, entry_name, player_name, pra_scored, player_id, fetched_at)
+               VALUES (:username, :game_date, :entry_name, :player_name, :pra_scored, :player_id, :fetched_at)""",
+            [{**r, "player_id": r.get("player_id"), "fetched_at": now} for r in rows],
         )
 
 
@@ -686,7 +692,7 @@ def get_league_picks() -> list[dict]:
     """Returns all league picks as a list of dicts."""
     with _conn() as cx:
         rows = cx.execute(
-            "SELECT username, game_date, entry_name, player_name, pra_scored "
+            "SELECT username, game_date, entry_name, player_name, pra_scored, player_id "
             "FROM league_picks ORDER BY game_date DESC, username"
         ).fetchall()
     return [dict(r) for r in rows]

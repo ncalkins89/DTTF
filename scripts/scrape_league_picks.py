@@ -4,12 +4,13 @@ Scrape all entrants' picks from playoffpicker.com/league/?id=11.
 
 Requires PLAYOFFPICKER_EMAIL and PLAYOFFPICKER_PASSWORD in .env.
 Writes unpivoted rows to the league_picks table:
-    (username, game_date, entry_name, player_name, pra_scored)
+    (username, game_date, entry_name, player_name, pra_scored, player_id)
 """
 import asyncio
 import os
 import re
 import sys
+import unicodedata
 from datetime import datetime
 from pathlib import Path
 
@@ -27,6 +28,77 @@ MONTH_ABBR = {
     "jan": 1, "feb": 2, "mar": 3, "apr": 4, "may": 5, "jun": 6,
     "jul": 7, "aug": 8, "sep": 9, "oct": 10, "nov": 11, "dec": 12,
 }
+
+
+def _ascii(s: str) -> str:
+    return unicodedata.normalize("NFKD", s).encode("ascii", "ignore").decode().lower()
+
+
+def _build_player_id_resolver():
+    """
+    Returns a callable: resolve(last_name_str, game_date_str, pra_scored_int) → player_id | None
+
+    Strategy:
+    1. Get all game_logs rows for the given game_date from the DB.
+    2. Filter to players whose last name (ascii-normalized) matches the site name.
+    3. If exactly one match, return that player_id.
+    4. If multiple, use pra_scored to pick the unique one.
+    5. If zero, fall back to roster-only last-name match (no game log for this date).
+    """
+    import sqlite3
+    from pathlib import Path
+    DB_PATH = Path(__file__).parent.parent / "data" / "dttf.db"
+    if not DB_PATH.exists():
+        return lambda *_: None
+
+    # Build last-name → [(player_id, player_name), ...] from rosters
+    try:
+        cx = sqlite3.connect(DB_PATH)
+        cx.row_factory = sqlite3.Row
+        roster_rows = cx.execute(
+            "SELECT DISTINCT player_id, player_name FROM rosters"
+        ).fetchall()
+        cx.close()
+    except Exception:
+        return lambda *_: None
+
+    # last_name_ascii → list of (player_id, full_name)
+    name_to_ids: dict[str, list[tuple]] = {}
+    for r in roster_rows:
+        parts = r["player_name"].split()
+        if not parts:
+            continue
+        last = _ascii(parts[-1])
+        name_to_ids.setdefault(last, []).append((r["player_id"], r["player_name"]))
+
+    def resolve(last_name: str, game_date: str, pra_scored) -> int | None:
+        key = _ascii(last_name.strip())
+        candidates = name_to_ids.get(key, [])
+        if not candidates:
+            return None
+        if len(candidates) == 1:
+            return candidates[0][0]
+        # Multiple candidates: try to narrow by game_log for this date + PRA
+        if pra_scored is None:
+            return None
+        try:
+            cx = sqlite3.connect(DB_PATH)
+            cx.row_factory = sqlite3.Row
+            pids = [c[0] for c in candidates]
+            ph = ",".join("?" * len(pids))
+            log_rows = cx.execute(
+                f"SELECT player_id, pra FROM game_logs WHERE game_date = ? AND player_id IN ({ph})",
+                [game_date, *pids],
+            ).fetchall()
+            cx.close()
+        except Exception:
+            return None
+        matches = [r["player_id"] for r in log_rows if r["pra"] is not None and round(r["pra"]) == int(pra_scored)]
+        if len(matches) == 1:
+            return matches[0]
+        return None
+
+    return resolve
 
 
 def _parse_date(header: str) -> str | None:
@@ -174,8 +246,17 @@ def main() -> None:
         print("[league_picks] no rows scraped")
         return
 
+    resolve = _build_player_id_resolver()
+    resolved = 0
+    for row in rows:
+        if row.get("player_id") is None and row.get("player_name"):
+            pid = resolve(row["player_name"], row["game_date"], row.get("pra_scored"))
+            if pid:
+                row["player_id"] = pid
+                resolved += 1
+
     upsert_league_picks(rows)
-    print(f"[league_picks] upserted {len(rows)} pick rows")
+    print(f"[league_picks] upserted {len(rows)} pick rows ({resolved} with player_id resolved)")
 
     # Summary
     dates = sorted({r["game_date"] for r in rows})

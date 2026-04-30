@@ -381,7 +381,6 @@ def _today_layout():
             dbc.Tab(label="Browse Players",  tab_id="subtab-players"),
             dbc.Tab(label="Player Scatter",  tab_id="subtab-scatter"),
             dbc.Tab(label="Compare Players", tab_id="subtab-compare"),
-            dbc.Tab(label="Leaderboard",     tab_id="subtab-leaderboard"),
         ]),
 
         # ── Date strip (NBA scoreboard style) ───────────────────────────
@@ -470,30 +469,6 @@ def _today_layout():
                     type="circle", color="#0071e3", delay_show=0, style={"minHeight": "420px"},
                 ),
             ], style={"padding": "10px 12px"})),
-        ]),
-
-        # ── Leaderboard subtab ──────────────────────────────────────────
-        html.Div(id="subtab-leaderboard-pane", className="mt-3", style={"display": "none"}, children=[
-            dbc.Card(dbc.CardBody([
-                dbc.Row([
-                    dbc.Col(
-                        dcc.Dropdown(
-                            id="leaderboard-highlight-dropdown",
-                            placeholder="Highlight an entrant...",
-                            style={"fontSize": "13px"},
-                            clearable=True,
-                        ),
-                        width=4,
-                    ),
-                ], className="mb-3"),
-                html.Div(id="leaderboard-stats", className="mb-3"),
-                dcc.Loading(
-                    dcc.Graph(id="leaderboard-chart",
-                              config={"displayModeBar": False, "responsive": True},
-                              style={"height": "380px"}),
-                    type="circle", color="#0071e3", delay_show=0, style={"minHeight": "380px"},
-                ),
-            ])),
         ]),
 
         # ── Compare Players subtab ───────────────────────────────────────
@@ -649,6 +624,61 @@ def _history_layout():
     ])
 
 
+def _leaderboard_layout():
+    return html.Div([
+        dbc.Card(dbc.CardBody([
+            dbc.Row([
+                dbc.Col(
+                    dcc.Dropdown(
+                        id="leaderboard-highlight-dropdown",
+                        placeholder="Highlight an entrant...",
+                        style={"fontSize": "13px"},
+                        clearable=True,
+                    ),
+                    width=4,
+                ),
+                dbc.Col(
+                    dbc.Select(
+                        id="leaderboard-expected-source",
+                        options=[
+                            {"label": "Our model (blended)", "value": "our_pred"},
+                            {"label": "Playoff avg",         "value": "playoff_avg"},
+                            {"label": "RS avg",              "value": "rs_avg"},
+                        ],
+                        value="our_pred",
+                        style={"fontSize": "13px", "width": "210px"},
+                    ),
+                    width="auto",
+                    className="d-flex align-items-center",
+                ),
+            ], className="mb-3"),
+            html.Div(id="leaderboard-stats", className="mb-3"),
+            dbc.Row([
+                dbc.Col(
+                    dcc.Loading(
+                        dcc.Graph(id="leaderboard-chart",
+                                  config={"displayModeBar": False, "responsive": True},
+                                  style={"height": "420px"}),
+                        type="circle", color="#0071e3", delay_show=0,
+                        style={"minHeight": "420px"},
+                    ),
+                    width=6,
+                ),
+                dbc.Col(
+                    dcc.Loading(
+                        dcc.Graph(id="leaderboard-scatter",
+                                  config={"displayModeBar": False, "responsive": True},
+                                  style={"height": "420px"}),
+                        type="circle", color="#0071e3", delay_show=0,
+                        style={"minHeight": "420px"},
+                    ),
+                    width=6,
+                ),
+            ]),
+        ])),
+    ])
+
+
 def _compute_disabled_days() -> list[str]:
     """Return all dates between first and last known game date that have no game scheduled."""
     from datetime import timedelta
@@ -708,16 +738,17 @@ app.layout = dbc.Container(
             active_tab="tab-today",
             children=[
                 dbc.Tab(label="Today's Picks", tab_id="tab-today"),
-                dbc.Tab(label="Player Model", tab_id="tab-model"),
-                dbc.Tab(label="Manage Picks", tab_id="tab-history"),
+                dbc.Tab(label="Player Model",  tab_id="tab-model"),
+                dbc.Tab(label="Manage Picks",  tab_id="tab-history"),
+                dbc.Tab(label="Leaderboard",   tab_id="tab-leaderboard"),
             ],
             className="mt-2",
         ),
 
-        # Today tab pane is always in the DOM to avoid race conditions with dynamic layout.
-        # Shown/hidden via CSS based on active tab.
-        html.Div(id="today-tab-pane", children=_today_layout(), style={"marginTop": "1rem"}),
-        html.Div(id="history-tab-pane", children=_history_layout(), style={"display": "none", "marginTop": "1rem"}),
+        # Static panes (always in DOM to avoid dynamic-layout race conditions)
+        html.Div(id="today-tab-pane",        children=_today_layout(),        style={"marginTop": "1rem"}),
+        html.Div(id="history-tab-pane",      children=_history_layout(),      style={"display": "none", "marginTop": "1rem"}),
+        html.Div(id="leaderboard-tab-pane",  children=_leaderboard_layout(),  style={"display": "none", "marginTop": "1rem"}),
 
         # Player Model tab renders dynamically (no persistent callback targets needed)
         html.Div(id="tab-content", className="mt-3", style={"display": "none"}),
@@ -1020,19 +1051,21 @@ def run_load_db(_, selected_date):
 # ── Tab routing ─────────────────────────────────────────────────────────────
 
 @app.callback(
-    Output("today-tab-pane", "style"),
-    Output("history-tab-pane", "style"),
-    Output("tab-content", "style"),
+    Output("today-tab-pane",       "style"),
+    Output("history-tab-pane",     "style"),
+    Output("tab-content",          "style"),
+    Output("leaderboard-tab-pane", "style"),
     Input("main-tabs", "active_tab"),
 )
 def toggle_tab_visibility(tab):
-    hide = {"display": "none"}
+    hide    = {"display": "none"}
     show_mt = {"display": "block", "marginTop": "1rem"}
-    if tab == "tab-today":
-        return show_mt, hide, hide
-    if tab == "tab-history":
-        return hide, show_mt, hide
-    return hide, hide, show_mt
+    return (
+        show_mt if tab == "tab-today"        else hide,
+        show_mt if tab == "tab-history"      else hide,
+        show_mt if tab == "tab-model"        else hide,
+        show_mt if tab == "tab-leaderboard"  else hide,
+    )
 
 
 @app.callback(Output("tab-content", "children"), Input("main-tabs", "active_tab"))
@@ -1060,17 +1093,15 @@ def toggle_history_subtabs(subtab):
     Output("subtab-players-pane", "style"),
     Output("subtab-scatter-pane", "style"),
     Output("subtab-compare-pane", "style"),
-    Output("subtab-leaderboard-pane", "style"),
     Input("today-subtabs", "active_tab"),
 )
 def toggle_subtabs(subtab):
     show = {"display": "block"}
     hide = {"display": "none"}
     return (
-        show if subtab == "subtab-players"     else hide,
-        show if subtab == "subtab-scatter"     else hide,
-        show if subtab == "subtab-compare"     else hide,
-        show if subtab == "subtab-leaderboard" else hide,
+        show if subtab == "subtab-players" else hide,
+        show if subtab == "subtab-scatter" else hide,
+        show if subtab == "subtab-compare" else hide,
     )
 
 
@@ -1646,10 +1677,10 @@ def update_scatter_chart(store_data, _sentinel, active_subtab):
 
 @app.callback(
     Output("leaderboard-highlight-dropdown", "options"),
-    Input("today-subtabs", "active_tab"),
+    Input("main-tabs", "active_tab"),
 )
-def populate_leaderboard_dropdown(active_subtab):
-    if active_subtab != "subtab-leaderboard":
+def populate_leaderboard_dropdown(active_tab):
+    if active_tab != "tab-leaderboard":
         return dash.no_update
     from src.db import get_league_picks
     picks = get_league_picks()
@@ -1665,10 +1696,10 @@ def populate_leaderboard_dropdown(active_subtab):
 @app.callback(
     Output("leaderboard-stats", "children"),
     Input("leaderboard-highlight-dropdown", "value"),
-    Input("today-subtabs", "active_tab"),
+    Input("main-tabs", "active_tab"),
 )
-def update_leaderboard_stats(highlight_user, active_subtab):
-    if active_subtab != "subtab-leaderboard" or not highlight_user:
+def update_leaderboard_stats(highlight_user, active_tab):
+    if active_tab != "tab-leaderboard" or not highlight_user:
         return []
 
     from src.db import get_league_picks
@@ -1724,7 +1755,11 @@ def update_leaderboard_stats(highlight_user, active_subtab):
                                "background": "#d2d2d7", "margin": "0 16px"})
 
     in_money  = behind_money <= 0
-    money_val = "In the money" if in_money else f"+{int(behind_money)}"
+    money_val = "In the money" if in_money else str(int(behind_money))
+
+    # Pts per pick avg
+    df_user = df[(df["username"] == highlight_user) & df["pra_scored"].notna()]
+    avg_pra = f"{df_user['pra_scored'].mean():.1f}" if not df_user.empty else "—"
 
     return html.Div([
         _stat("Points",           f"{current_pts:,}"),
@@ -1733,9 +1768,11 @@ def update_leaderboard_stats(highlight_user, active_subtab):
         divider,
         _stat("Best Rank",        f"{best_rank} / {n_users}"),
         divider,
-        _stat("Pts from 1st",     "0" if behind_1st == 0 else f"+{behind_1st}"),
+        _stat("Pts from 1st",     str(behind_1st)),
         divider,
         _stat("Pts from the money", money_val, highlight=in_money),
+        divider,
+        _stat("Pts per pick [avg]", avg_pra),
     ], style={"display": "flex", "alignItems": "center", "background": "#fff",
               "border": "1px solid #d2d2d7", "borderRadius": "12px",
               "padding": "14px 24px", "width": "fit-content",
@@ -1744,13 +1781,13 @@ def update_leaderboard_stats(highlight_user, active_subtab):
 
 @app.callback(
     Output("leaderboard-chart", "figure"),
-    Input("today-subtabs", "active_tab"),
+    Input("main-tabs", "active_tab"),
     Input("leaderboard-highlight-dropdown", "value"),
 )
-def update_leaderboard_chart(active_subtab, highlight_user):
+def update_leaderboard_chart(active_tab, highlight_user):
     empty = go.Figure()
-    empty.update_layout(template="plotly_white", height=520)
-    if active_subtab != "subtab-leaderboard":
+    empty.update_layout(template="plotly_white", height=420)
+    if active_tab != "tab-leaderboard":
         return dash.no_update
 
     from src.db import get_league_picks
@@ -1819,7 +1856,7 @@ def update_leaderboard_chart(active_subtab, highlight_user):
 
     fig.update_layout(
         template="plotly_white",
-        height=380,
+        height=420,
         xaxis=dict(title=None, tickfont=dict(size=14), gridcolor="#f0f0f0"),
         yaxis=dict(title="Cumulative PRA", title_font=dict(size=14),
                    tickfont=dict(size=14), gridcolor="#f0f0f0"),
@@ -1835,6 +1872,187 @@ def update_leaderboard_chart(active_subtab, highlight_user):
         font=dict(family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
                   size=14),
     )
+    return fig
+
+
+@app.callback(
+    Output("leaderboard-scatter", "figure"),
+    Input("main-tabs", "active_tab"),
+    Input("leaderboard-highlight-dropdown", "value"),
+    Input("leaderboard-expected-source", "value"),
+)
+def update_leaderboard_scatter(active_tab, highlight_user, expected_source):
+    from plotly.subplots import make_subplots
+
+    def _empty(msg="Select an entrant above"):
+        fig = go.Figure()
+        fig.update_layout(
+            template="plotly_white", height=420,
+            annotations=[dict(text=msg, showarrow=False, font=dict(color="#999"),
+                              xref="paper", yref="paper", x=0.5, y=0.5)],
+        )
+        return fig
+
+    if active_tab != "tab-leaderboard":
+        return dash.no_update
+    if not highlight_user:
+        return _empty()
+
+    from src.db import get_league_picks, get_model_projections
+    picks = get_league_picks()
+    if not picks:
+        return _empty("No picks data")
+
+    df_all = pd.DataFrame(picks)
+    df = df_all[(df_all["username"] == highlight_user) & df_all["pra_scored"].notna()].copy()
+    if df.empty:
+        return _empty("No scored picks yet")
+
+    expected_source = expected_source or "our_pred"
+
+    # ── Build expected-PRA lookup ──────────────────────────────────────────
+    # Key: (game_date, player_id) or fallback by last-name + date
+    from src.data_fetcher import CURRENT_SEASON
+
+    expected: list[float | None] = []
+    labels:   list[str] = []
+
+    for _, row in df.iterrows():
+        pid      = row.get("player_id")
+        gdate    = str(row["game_date"])[:10]
+        raw_name = row.get("player_name") or ""
+
+        exp_pra = None
+
+        if expected_source == "our_pred":
+            if pid:
+                mrows = get_model_projections(gdate)
+                m = next((r for r in mrows if r["player_id"] == pid), None)
+                if m:
+                    exp_pra = m.get("pred_blended") or m.get("our_proj")
+            if exp_pra is None and not pid:
+                # Try last-name match against model_projections for that date
+                mrows = get_model_projections(gdate)
+                last_ascii = _ascii_name(raw_name.split()[-1]) if raw_name else ""
+                matches = [r for r in mrows
+                           if _ascii_name((r.get("player_name") or "").split()[-1]) == last_ascii]
+                if len(matches) == 1:
+                    exp_pra = matches[0].get("pred_blended") or matches[0].get("our_proj")
+
+        elif expected_source in ("playoff_avg", "rs_avg"):
+            if pid:
+                logs, _ = db_get_game_logs(pid, CURRENT_SEASON)
+                if not logs.empty:
+                    stype = "Playoffs" if expected_source == "playoff_avg" else "Regular Season"
+                    seg = logs[
+                        (logs["SEASON_TYPE"] == stype) &
+                        (logs["GAME_DATE"] < pd.Timestamp(gdate))
+                    ]
+                    if not seg.empty:
+                        exp_pra = float(seg["PRA"].mean())
+
+        expected.append(exp_pra)
+        labels.append(raw_name)
+
+    # Filter to rows where expected is available
+    actual_vals = []
+    exp_vals    = []
+    hover_names = []
+    game_dates  = []
+    for i, (_, row) in enumerate(df.iterrows()):
+        if expected[i] is not None:
+            actual_vals.append(float(row["pra_scored"]))
+            exp_vals.append(expected[i])
+            hover_names.append(labels[i])
+            game_dates.append(str(row["game_date"])[:10])
+
+    if not actual_vals:
+        return _empty("No expected-PRA data for this source")
+
+    # Color by deviation: green = over-performed, red = under-performed
+    diff = [a - e for a, e in zip(actual_vals, exp_vals)]
+    max_abs = max(abs(d) for d in diff) or 1
+    colors = [
+        f"rgba(22,163,74,{min(0.3 + abs(d) / max_abs * 0.7, 1.0):.2f})" if d >= 0
+        else f"rgba(220,38,38,{min(0.3 + abs(d) / max_abs * 0.7, 1.0):.2f})"
+        for d in diff
+    ]
+
+    # ── Build figure with marginal histograms ─────────────────────────────
+    fig = make_subplots(
+        rows=2, cols=2,
+        column_widths=[0.82, 0.18],
+        row_heights=[0.18, 0.82],
+        shared_xaxes=True,
+        shared_yaxes=True,
+        horizontal_spacing=0.01,
+        vertical_spacing=0.01,
+    )
+
+    # Top marginal histogram (actual PRA distribution)
+    fig.add_trace(
+        go.Histogram(
+            x=actual_vals, nbinsx=12,
+            marker_color="#0071e3", opacity=0.5, showlegend=False,
+        ),
+        row=1, col=1,
+    )
+
+    # Right marginal histogram (expected PRA distribution, rotated)
+    fig.add_trace(
+        go.Histogram(
+            y=exp_vals, nbinsy=12,
+            marker_color="#ca8a04", opacity=0.5, showlegend=False,
+        ),
+        row=2, col=2,
+    )
+
+    # 45-degree reference line (y = x)
+    lo = min(min(actual_vals), min(exp_vals)) - 2
+    hi = max(max(actual_vals), max(exp_vals)) + 2
+    fig.add_trace(
+        go.Scatter(
+            x=[lo, hi], y=[lo, hi],
+            mode="lines",
+            line=dict(color="#888", width=1, dash="dot"),
+            showlegend=False, hoverinfo="skip",
+        ),
+        row=2, col=1,
+    )
+
+    # Main scatter
+    hover_texts = [
+        f"<b>{n}</b><br>Actual: {a:.0f} | Expected: {e:.1f}<br>{d:+.1f} ({g})"
+        for n, a, e, d, g in zip(hover_names, actual_vals, exp_vals, diff, game_dates)
+    ]
+    fig.add_trace(
+        go.Scatter(
+            x=actual_vals, y=exp_vals,
+            mode="markers",
+            marker=dict(color=colors, size=11, line=dict(color="#333", width=0.5)),
+            text=hover_texts,
+            hovertemplate="%{text}<extra></extra>",
+            showlegend=False,
+        ),
+        row=2, col=1,
+    )
+
+    source_label = {"our_pred": "Our pred (blended)", "playoff_avg": "Playoff avg",
+                    "rs_avg": "RS avg"}.get(expected_source, expected_source)
+
+    fig.update_layout(
+        template="plotly_white",
+        height=420,
+        margin=dict(l=50, r=10, t=10, b=50),
+        plot_bgcolor="white",
+        paper_bgcolor="white",
+        hovermode="closest",
+        font=dict(family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif", size=13),
+    )
+    fig.update_xaxes(title_text="Actual PRA", row=2, col=1, gridcolor="#f0f0f0")
+    fig.update_yaxes(title_text=f"Expected PRA ({source_label})", row=2, col=1, gridcolor="#f0f0f0")
+    fig.update_xaxes(showticklabels=False, row=1, col=1)
+    fig.update_yaxes(showticklabels=False, row=2, col=2)
     return fig
 
 
