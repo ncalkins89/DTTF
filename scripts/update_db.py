@@ -378,6 +378,10 @@ def main() -> None:
     else:
         print("\n[12] Blend weights estimation — skipped (--skip-logs)")
 
+    _step(13, "League picks (playoffpicker.com)")
+    from scripts.scrape_league_picks import main as scrape_league_picks
+    scrape_league_picks()
+
     print("\n✓ Done. Open the dashboard: python3 src/dashboard.py")
 
 

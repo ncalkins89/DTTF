@@ -10,6 +10,7 @@ SQLite persistence layer — all fetched data lives here.
   - game_logs             player game logs (last 20, TTL 6h)
   - rosters               team rosters (TTL 24h)
   - team_defense_ratings  DEF_RATING per team/season (TTL 24h)
+  - league_picks          scraped picks from playoffpicker.com league
 """
 import sqlite3
 import unicodedata
@@ -151,6 +152,16 @@ def init_db() -> None:
             american_odds    INTEGER,
             opponent_abbr    TEXT,
             fetched_at       TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS league_picks (
+            username    TEXT NOT NULL,
+            game_date   TEXT NOT NULL,
+            entry_name  TEXT,
+            player_name TEXT,
+            pra_scored  INTEGER,
+            fetched_at  TEXT NOT NULL,
+            PRIMARY KEY (username, game_date)
         );
         """)
 
@@ -655,3 +666,27 @@ def get_last_updated(game_date: str) -> str | None:
             )
         """, (game_date, game_date, game_date)).fetchone()
     return row[0] if row and row[0] else None
+
+
+def upsert_league_picks(rows: list[dict]) -> None:
+    """Upsert rows from playoffpicker.com scrape.
+    Each row: {username, game_date, entry_name, player_name, pra_scored}
+    """
+    now = datetime.utcnow().isoformat()
+    with _conn() as cx:
+        cx.executemany(
+            """INSERT OR REPLACE INTO league_picks
+               (username, game_date, entry_name, player_name, pra_scored, fetched_at)
+               VALUES (:username, :game_date, :entry_name, :player_name, :pra_scored, :fetched_at)""",
+            [{**r, "fetched_at": now} for r in rows],
+        )
+
+
+def get_league_picks() -> list[dict]:
+    """Returns all league picks as a list of dicts."""
+    with _conn() as cx:
+        rows = cx.execute(
+            "SELECT username, game_date, entry_name, player_name, pra_scored "
+            "FROM league_picks ORDER BY game_date DESC, username"
+        ).fetchall()
+    return [dict(r) for r in rows]

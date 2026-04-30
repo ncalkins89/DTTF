@@ -9,6 +9,7 @@ python-dotenv>=1.0.1
 diskcache>=5.6.3
 APScheduler>=3.10.0
 gunicorn>=21.0.0
+playwright>=1.40.0
 dash-ag-grid>=31.0.0
 # Model development (local only — not needed on Oracle for the live app)
 xgboost>=2.0.0
