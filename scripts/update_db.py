@@ -97,6 +97,20 @@ def update_series_standings(season: str) -> None:
 
 def update_series_odds() -> None:
     _step(4, "Series odds (DraftKings via ScraperAPI)")
+    import sqlite3
+    from datetime import datetime, timedelta
+    from src.db import DB_PATH
+    try:
+        with sqlite3.connect(DB_PATH) as cx:
+            row = cx.execute("SELECT MIN(fetched_at) FROM series_odds").fetchone()
+        last = row[0] if row and row[0] else None
+        if last:
+            age = datetime.utcnow() - datetime.fromisoformat(last)
+            if age < timedelta(hours=4):
+                print(f"  Skipping — last fetched {int(age.total_seconds() / 60)}m ago (TTL 4h)")
+                return
+    except Exception:
+        pass
     from src.series_odds import fetch_series_win_probs
     result = fetch_series_win_probs(force_refresh=True)
     if not result:
