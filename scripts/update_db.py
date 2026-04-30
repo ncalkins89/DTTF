@@ -55,28 +55,10 @@ def update_schedule(game_date: str) -> list[dict]:
 
 
 def update_odds(game_date: str) -> None:
-    _step(2, "Odds + game lines (The-Odds-API)")
-    import os
-    api_key = os.environ.get("ODDS_API_KEY", "")
-    if not api_key:
-        print("  ODDS_API_KEY not set — skipping.")
-        return
-    from src.odds import _fetch_all_markets
-    win_probs, game_lines = _fetch_all_markets(api_key)
-    if not win_probs:
-        print("  No odds returned (games may be live or completed).")
-        return
-    upsert_odds(game_date, win_probs)
-    upsert_game_lines(game_date, game_lines)
-    for abbr in sorted(win_probs):
-        prob = win_probs[abbr]
-        line = game_lines.get(abbr, {})
-        parts = [f"{prob:.1%}"]
-        if line.get("spread") is not None:
-            parts.append(f"spread={line['spread']:+.1f}")
-        if line.get("total") is not None:
-            parts.append(f"O/U={line['total']}")
-        print(f"  {abbr}: {' '.join(parts)}")
+    _step(2, "Odds + game lines (The-Odds-API) — DISABLED")
+    # Disabled: free tier quota (500 req/mo) exhausted. Per-game win probs and
+    # spread/O/U data fall back to stale DB values. See docs/disabled_data.md.
+    print("  Skipped (disabled — see docs/disabled_data.md)")
 
 
 def update_series_standings(season: str) -> None:
