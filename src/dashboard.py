@@ -1683,14 +1683,41 @@ def populate_leaderboard_dropdown(active_tab):
     if active_tab != "tab-leaderboard":
         return dash.no_update
     from src.db import get_league_picks
+    import math as _math
     picks = get_league_picks()
     if not picks:
         return []
-    seen = {}
+
+    df = pd.DataFrame(picks)
+    df = df[df["pra_scored"].notna()].copy()
+
+    user_to_entry = {}
     for p in picks:
-        seen[p["username"]] = p["entry_name"] or p["username"]
-    return [{"label": f"{entry} ({user})", "value": user}
-            for user, entry in sorted(seen.items(), key=lambda x: x[1].lower())]
+        user_to_entry[p["username"]] = p["entry_name"] or p["username"]
+
+    if df.empty:
+        return [{"label": f"{entry} ({user})", "value": user}
+                for user, entry in sorted(user_to_entry.items(), key=lambda x: x[1].lower())]
+
+    df["game_date"] = pd.to_datetime(df["game_date"])
+    dates = sorted(df["game_date"].unique())
+    pivot  = df.pivot_table(index="game_date", columns="username",
+                            values="pra_scored", aggfunc="sum").reindex(dates).fillna(0)
+    cumsum = pivot.cumsum()
+    final  = cumsum.iloc[-1]
+    ranked = final.rank(method="min", ascending=False).astype(int)
+    n      = len(ranked)
+    money_n = _math.ceil(0.15 * n)
+    money_cutoff = float(final.nlargest(money_n).iloc[-1])
+
+    options = []
+    for user, rank in sorted(ranked.items(), key=lambda x: x[1]):
+        entry = user_to_entry.get(user, user)
+        pts   = int(final[user])
+        in_money = pts >= money_cutoff
+        suffix = " 💰" if in_money else ""
+        options.append({"label": f"#{rank}  {entry}{suffix}  ({pts} pts)", "value": user})
+    return options
 
 
 @app.callback(
@@ -1838,20 +1865,19 @@ def update_leaderboard_chart(active_tab, highlight_user):
             line=line,
             opacity=opacity,
             zorder=z,
-            showlegend=is_highlight or not highlight_user,
+            showlegend=False,
             hovertemplate=f"<b>{label}</b><br>%{{x}}: %{{y}} cumulative PRA<extra></extra>",
         ))
 
-        # Endpoint label for highlighted or top-5 when no highlight
-        show_label = is_highlight or (not highlight_user and i < 5)
-        if show_label:
+        # Endpoint annotation only for the highlighted entrant
+        if is_highlight:
             fig.add_annotation(
                 x=x_vals[-1],
                 y=float(y_vals[-1]),
                 text=f" {label} ({int(y_vals[-1])})",
                 showarrow=False,
                 xanchor="left",
-                font=dict(size=11, color="#0071e3" if is_highlight else "#555"),
+                font=dict(size=12, color="#0071e3"),
             )
 
     fig.update_layout(
@@ -2018,8 +2044,8 @@ def update_leaderboard_scatter(active_tab, highlight_user, expected_source):
             elif expected_source == "playoff_avg" and pid:
                 r = cx.execute(
                     "SELECT AVG(pra) as a FROM game_logs "
-                    "WHERE player_id=? AND season=? AND season_type='Playoffs' AND game_date<?",
-                    (pid, CURRENT_SEASON, gdate),
+                    "WHERE player_id=? AND season=? AND season_type='Playoffs'",
+                    (pid, CURRENT_SEASON),
                 ).fetchone()
                 if r and r["a"] is not None:
                     exp_pra = float(r["a"])
