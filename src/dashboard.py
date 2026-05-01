@@ -1893,17 +1893,6 @@ def update_leaderboard_chart(active_tab, highlight_user):
             hovertemplate=f"<b>{label}</b><br>%{{x}}: %{{y}} cumulative PRA<extra></extra>",
         ))
 
-        # Endpoint annotation only for the highlighted entrant
-        if is_highlight:
-            fig.add_annotation(
-                x=x_vals[-1],
-                y=float(y_vals[-1]),
-                text=f" {label} ({int(y_vals[-1])})",
-                showarrow=False,
-                xanchor="left",
-                font=dict(size=12, color="#0071e3"),
-            )
-
     fig.update_layout(
         template="plotly_white",
         height=420,
@@ -1911,7 +1900,7 @@ def update_leaderboard_chart(active_tab, highlight_user):
         yaxis=dict(title="Cumulative PRA", title_font=dict(size=14),
                    tickfont=dict(size=14), gridcolor="#f0f0f0"),
         legend=dict(visible=False),
-        margin=dict(l=55, r=40, t=20, b=40),
+        margin=dict(l=55, r=20, t=20, b=40),
         hovermode="x unified",
         plot_bgcolor="white",
         paper_bgcolor="white",
