@@ -452,6 +452,15 @@ def _today_layout():
                         style={"width": "150px", "fontSize": "13px", "display": "inline-block"},
                     ),
                 ], width="auto", className="d-flex align-items-center mb-2"),
+                dbc.Col(
+                    dbc.Switch(
+                        id="hide-used-toggle",
+                        label="Hide already-used players",
+                        value=False,
+                        style={"fontSize": "13px"},
+                    ),
+                    width="auto", className="d-flex align-items-center mb-2 ms-3",
+                ),
             ]),
             dcc.Loading(
                 html.Div(id="today-table-container"),
@@ -637,20 +646,6 @@ def _leaderboard_layout():
                     ),
                     width=4,
                 ),
-                dbc.Col(
-                    dbc.Select(
-                        id="leaderboard-expected-source",
-                        options=[
-                            {"label": "DraftEdge projection", "value": "de_proj"},
-                            {"label": "Playoff avg",          "value": "playoff_avg"},
-                            {"label": "RS avg (2025-26)",     "value": "rs_avg"},
-                        ],
-                        value="de_proj",
-                        style={"fontSize": "13px", "width": "210px"},
-                    ),
-                    width="auto",
-                    className="d-flex align-items-center",
-                ),
             ], className="mb-3"),
             html.Div(id="leaderboard-stats", className="mb-3"),
             dbc.Row([
@@ -664,16 +659,29 @@ def _leaderboard_layout():
                     ),
                     width=6,
                 ),
-                dbc.Col(
+                dbc.Col([
+                    html.Div([
+                        html.Label("Expectation metric",
+                                   style={"fontSize": "12px", "color": "#666", "marginBottom": "4px"}),
+                        dbc.Select(
+                            id="leaderboard-expected-source",
+                            options=[
+                                {"label": "Pred (blend)",   "value": "pred_blend"},
+                                {"label": "Playoff avg",    "value": "playoff_avg"},
+                                {"label": "Reg Season avg", "value": "rs_avg"},
+                            ],
+                            value="playoff_avg",
+                            style={"fontSize": "13px", "width": "180px"},
+                        ),
+                    ], className="mb-2"),
                     dcc.Loading(
                         dcc.Graph(id="leaderboard-scatter",
                                   config={"displayModeBar": False, "responsive": True},
-                                  style={"height": "420px"}),
+                                  style={"height": "400px"}),
                         type="circle", color="#0071e3", delay_show=0,
-                        style={"minHeight": "420px"},
+                        style={"minHeight": "400px"},
                     ),
-                    width=6,
-                ),
+                ], width=6),
             ]),
         ])),
     ])
@@ -1050,22 +1058,61 @@ def run_load_db(_, selected_date):
 
 # ── Tab routing ─────────────────────────────────────────────────────────────
 
-@app.callback(
+# Clientside callbacks for tab/pane visibility — run in the browser,
+# no server round-trip, so tabs switch instantly even while data is loading.
+app.clientside_callback(
+    """
+    function(tab) {
+        var show = {"display": "block", "marginTop": "1rem"};
+        var hide = {"display": "none"};
+        return [
+            tab === "tab-today"       ? show : hide,
+            tab === "tab-history"     ? show : hide,
+            tab === "tab-model"       ? show : hide,
+            tab === "tab-leaderboard" ? show : hide,
+        ];
+    }
+    """,
     Output("today-tab-pane",       "style"),
     Output("history-tab-pane",     "style"),
     Output("tab-content",          "style"),
     Output("leaderboard-tab-pane", "style"),
     Input("main-tabs", "active_tab"),
 )
-def toggle_tab_visibility(tab):
-    hide    = {"display": "none"}
-    show_mt = {"display": "block", "marginTop": "1rem"}
-    return (
-        show_mt if tab == "tab-today"        else hide,
-        show_mt if tab == "tab-history"      else hide,
-        show_mt if tab == "tab-model"        else hide,
-        show_mt if tab == "tab-leaderboard"  else hide,
-    )
+
+app.clientside_callback(
+    """
+    function(subtab) {
+        var show = {"display": "block"};
+        var hide = {"display": "none"};
+        return [
+            subtab === "subtab-players" ? show : hide,
+            subtab === "subtab-scatter" ? show : hide,
+            subtab === "subtab-compare" ? show : hide,
+        ];
+    }
+    """,
+    Output("subtab-players-pane", "style"),
+    Output("subtab-scatter-pane", "style"),
+    Output("subtab-compare-pane", "style"),
+    Input("today-subtabs", "active_tab"),
+)
+
+app.clientside_callback(
+    """
+    function(subtab) {
+        var show = {"display": "block"};
+        var hide = {"display": "none"};
+        return [
+            subtab === "history-record"     ? show : hide,
+            subtab === "history-commitment" ? show : hide,
+        ];
+    }
+    """,
+    Output("history-record-pane",     "style"),
+    Output("history-commitment-pane", "style"),
+    Input("history-subtabs", "active_tab"),
+)
 
 
 @app.callback(Output("tab-content", "children"), Input("main-tabs", "active_tab"))
@@ -1073,36 +1120,6 @@ def render_tab(tab):
     if tab == "tab-model":
         return _model_layout()
     return html.Div()
-
-
-@app.callback(
-    Output("history-record-pane", "style"),
-    Output("history-commitment-pane", "style"),
-    Input("history-subtabs", "active_tab"),
-)
-def toggle_history_subtabs(subtab):
-    show = {"display": "block"}
-    hide = {"display": "none"}
-    return (
-        show if subtab == "history-record" else hide,
-        show if subtab == "history-commitment" else hide,
-    )
-
-
-@app.callback(
-    Output("subtab-players-pane", "style"),
-    Output("subtab-scatter-pane", "style"),
-    Output("subtab-compare-pane", "style"),
-    Input("today-subtabs", "active_tab"),
-)
-def toggle_subtabs(subtab):
-    show = {"display": "block"}
-    hide = {"display": "none"}
-    return (
-        show if subtab == "subtab-players" else hide,
-        show if subtab == "subtab-scatter" else hide,
-        show if subtab == "subtab-compare" else hide,
-    )
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -1123,7 +1140,7 @@ _DISPLAY_COLS = [
 ]
 
 
-def _render_table_from_store(store_data, urgency_field):
+def _render_table_from_store(store_data, urgency_field, hide_used=False):
     """Build the AG Grid from serialized store data. Fast — no DB calls."""
     if store_data is None:
         return html.P("Loading...", className="text-muted mt-3")
@@ -1134,6 +1151,8 @@ def _render_table_from_store(store_data, urgency_field):
         return html.P("No player data — run update_db to load today's data.", className="text-muted mt-3")
 
     df = pd.DataFrame(store_data["rows"])
+    if hide_used and "Picked" in df.columns:
+        df = df[~df["Picked"].fillna(False).astype(bool)]
     urgency_col = urgency_field or "Urgency"
     if urgency_col in df.columns:
         df = df.assign(Urgency_Display=df[urgency_col])
@@ -1155,8 +1174,9 @@ def _render_table_from_store(store_data, urgency_field):
          "cellStyle": {"function": "({'color': params.value&&params.value[0]==='✓' ? '#6e6e73' : params.value&&params.value[0]==='❌' ? '#dc2626' : '#e67e22', 'fontSize':'12px', 'fontWeight':'600'})"}},
         {"field": "Pos"},
         {"field": "Team"},
-        {"field": "team_picks_used", "headerName": "Players >20 remaining", "width": 160,
-         "cellRenderer": "TeamCommitmentBar", "sortable": True, "filter": False},
+        {"field": "team_picks_used", "headerName": "Players\n>20 remaining", "width": 140,
+         "cellRenderer": "TeamCommitmentBar", "sortable": True, "filter": False,
+         "wrapHeaderText": True},
         {"field": "Opp"},
         {"field": "Urgency_Display", "headerName": "Urgency", "width": 85,
          "sort": "desc",
@@ -1201,6 +1221,7 @@ def _render_table_from_store(store_data, urgency_field):
         dashGridOptions={
             "rowHeight": 34,
             "headerHeight": 38,
+            "autoHeaderHeight": True,
             "groupHeaderHeight": 28,
             "suppressCellFocus": True,
             "rowSelection": "multiple",
@@ -1224,9 +1245,10 @@ def _render_table_from_store(store_data, urgency_field):
     Input("game-date-picker", "date"),
     Input("load-db-trigger", "data"),
     State("urgency-model-select", "value"),
+    State("hide-used-toggle", "value"),
     prevent_initial_call=False,
 )
-def load_and_render_today(tab, _, game_date, _load_trigger, urgency_field):
+def load_and_render_today(tab, _, game_date, _load_trigger, urgency_field, hide_used):
     if tab != "tab-today" and tab is not None:
         return dash.no_update, None, dash.no_update
     try:
@@ -1239,7 +1261,7 @@ def load_and_render_today(tab, _, game_date, _load_trigger, urgency_field):
     if df.empty:
         print("[dashboard] df is empty", flush=True)
         store = {"rows": [], "game_date": game_date, "no_games": True}
-        return _render_table_from_store(store, urgency_field), store, game_date
+        return _render_table_from_store(store, urgency_field, hide_used), store, game_date
     print(f"[dashboard] built {len(df)} rows", flush=True)
     available = [c for c in _DISPLAY_COLS if c in df.columns]
     store = {"rows": df[available].to_dict("records"), "game_date": game_date}
@@ -1249,7 +1271,7 @@ def load_and_render_today(tab, _, game_date, _load_trigger, urgency_field):
     import threading
     threading.Thread(target=_prefetch_adjacent_dates, args=(effective_date,), daemon=True).start()
 
-    return _render_table_from_store(store, urgency_field), store, game_date
+    return _render_table_from_store(store, urgency_field, hide_used), store, game_date
 
 
 def _prefetch_adjacent_dates(current_date: str) -> None:
@@ -1292,11 +1314,12 @@ def populate_pick_dropdown(tab, _store):
 @app.callback(
     Output("today-table-container", "children", allow_duplicate=True),
     Input("urgency-model-select", "value"),
+    Input("hide-used-toggle", "value"),
     State("today-data-store", "data"),
     prevent_initial_call=True,
 )
-def rerender_for_urgency(urgency_field, store_data):
-    return _render_table_from_store(store_data, urgency_field)
+def rerender_for_urgency(urgency_field, hide_used, store_data):
+    return _render_table_from_store(store_data, urgency_field, hide_used)
 
 
 @app.callback(
@@ -1473,9 +1496,10 @@ def remove_pick_callback(n_clicks, player_id):
     Input("picks-store", "data"),
     State("today-data-store", "data"),
     State("urgency-model-select", "value"),
+    State("hide-used-toggle", "value"),
     prevent_initial_call=True,
 )
-def patch_and_rerender_picks(_, store_data, urgency_field):
+def patch_and_rerender_picks(_, store_data, urgency_field, hide_used):
     """Update Picked flags and re-render table immediately after a pick change."""
     if not store_data or not store_data.get("rows"):
         return dash.no_update, dash.no_update
@@ -1484,7 +1508,7 @@ def patch_and_rerender_picks(_, store_data, urgency_field):
     for row in rows:
         row["Picked"] = row["player_id"] in used_ids
     updated = {**store_data, "rows": rows}
-    return updated, _render_table_from_store(updated, urgency_field)
+    return updated, _render_table_from_store(updated, urgency_field, hide_used)
 
 
 @app.callback(
@@ -1933,7 +1957,7 @@ def update_leaderboard_scatter(active_tab, highlight_user, expected_source):
     if df.empty:
         return _empty("No scored picks yet")
 
-    expected_source = expected_source or "de_proj"
+    expected_source = expected_source or "playoff_avg"
 
     # ── Inline player_id resolution ────────────────────────────────────────
     # Strategy (in priority order):
@@ -2006,7 +2030,7 @@ def update_leaderboard_scatter(active_tab, highlight_user, expected_source):
         resolved_pids: list[int | None] = []
         for _, row in df.iterrows():
             pid = row.get("player_id")
-            if pid:
+            if pd.notna(pid) and pid:
                 resolved_pids.append(int(pid))
             else:
                 resolved_pids.append(
@@ -2024,13 +2048,13 @@ def update_leaderboard_scatter(active_tab, highlight_user, expected_source):
             gdate = str(row["game_date"])[:10]
             exp_pra = None
 
-            if expected_source == "de_proj" and pid:
-                de = cx.execute(
-                    "SELECT pra FROM de_projections WHERE player_id=? AND date=?",
+            if expected_source == "pred_blend" and pid:
+                r = cx.execute(
+                    "SELECT pred_blended FROM model_projections WHERE player_id=? AND game_date=?",
                     (pid, gdate),
                 ).fetchone()
-                if de and de["pra"] is not None:
-                    exp_pra = float(de["pra"])
+                if r and r["pred_blended"] is not None:
+                    exp_pra = float(r["pred_blended"])
 
             elif expected_source == "rs_avg" and pid:
                 r = cx.execute(
@@ -2069,7 +2093,7 @@ def update_leaderboard_scatter(active_tab, highlight_user, expected_source):
             game_dates.append(str(row["game_date"])[:10])
 
     if not exp_vals:
-        src_label = {"de_proj": "DraftEdge", "rs_avg": "RS avg", "playoff_avg": "playoff avg"}
+        src_label = {"pred_blend": "Pred (blend)", "rs_avg": "Reg Season avg", "playoff_avg": "Playoff avg"}
         return _empty(f"No {src_label.get(expected_source, expected_source)} data for these picks")
 
     # Deviation: positive = over-performed (actual > expected)
@@ -2136,8 +2160,8 @@ def update_leaderboard_scatter(active_tab, highlight_user, expected_source):
         row=2, col=1,
     )
 
-    source_labels = {"de_proj": "DraftEdge", "playoff_avg": "Playoff avg",
-                     "rs_avg": "RS avg (2025-26)"}
+    source_labels = {"pred_blend": "Pred (blend)", "playoff_avg": "Playoff avg",
+                     "rs_avg": "Reg Season avg"}
     src_lbl = source_labels.get(expected_source, expected_source)
 
     fig.update_layout(
