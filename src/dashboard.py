@@ -33,8 +33,8 @@ from src.data_fetcher import (
     get_team_defense_ratings,
     get_todays_games,
 )
-from src.odds import fetch_per_game_win_probs, fetch_series_win_probs, get_series_record_for_team
-from src.external import fetch_draftedge_projections, fetch_fanduel_projections, fetch_injuries
+from src.odds import get_series_record_for_team
+
 from src.research import compute_local_signals
 from src.db import (
     init_db,
@@ -181,26 +181,15 @@ def build_todays_player_df(game_date: str | None = None, current_round: int = 1)
     if not db_odds:
         print(f"[dashboard] WARNING: no per-game odds in DB for {game_date} — odds will be null", flush=True)
     per_game_probs = db_odds or {}
-    is_today = game_date == today_pt().isoformat()
-    # Skip live ScraperAPI call for past/future dates — DB already has series odds from when
-    # those dates were current. Live fetch only makes sense for today.
-    if is_today:
-        series_win_probs = fetch_series_win_probs(series_standings, per_game_probs)
-    else:
-        from src.db import get_series_odds as _db_series
-        series_win_probs = {abbr: v["series_win_prob"] for abbr, v in _db_series().items()}
+    from src.db import get_series_odds as _db_series
+    series_win_probs = {abbr: v["series_win_prob"] for abbr, v in _db_series().items()}
     used_ids = get_used_player_ids()
     ext_projs = load_external_projections()
 
-    db_de = db_get_de_projections(game_date)  # DB first
-    # Only fall back to live DE / live game lines for today's date.
-    # For past dates the live APIs return today's data which would be wrong.
-    de_projs = db_de if db_de else (fetch_draftedge_projections() if is_today else {})
-    fd_projs = db_get_fd_projections(game_date) or (fetch_fanduel_projections() if is_today else {})
-    injuries = db_get_injuries() or (fetch_injuries() if is_today else {})
-
-    from src.odds import fetch_game_lines
-    game_lines = db_get_game_lines(game_date) or (fetch_game_lines() if is_today else {})
+    de_projs = db_get_de_projections(game_date) or {}
+    fd_projs = db_get_fd_projections(game_date) or {}
+    injuries = db_get_injuries() or {}
+    game_lines = db_get_game_lines(game_date) or {}
 
     from src.data_fetcher import CURRENT_SEASON as _CS, PRIOR_SEASON as _PS
 
@@ -2273,8 +2262,8 @@ def update_model_charts(player_id, decay_rate, tab):
     def_ratings = get_team_defense_ratings()
     from src.data_fetcher import CURRENT_SEASON as _CS2
     series_standings = db_get_series_standings(_CS2) or get_series_standings()
-    per_game_probs = fetch_per_game_win_probs()
-    series_win_probs = fetch_series_win_probs(series_standings, per_game_probs)
+    from src.db import get_series_odds as _db_series2
+    series_win_probs = {abbr: v["series_win_prob"] for abbr, v in _db_series2().items()}
 
     # Find which game this player is in
     player_team_id = None
