@@ -181,12 +181,18 @@ def build_todays_player_df(game_date: str | None = None, current_round: int = 1)
     if not db_odds:
         print(f"[dashboard] WARNING: no per-game odds in DB for {game_date} — odds will be null", flush=True)
     per_game_probs = db_odds or {}
-    series_win_probs = fetch_series_win_probs(series_standings, per_game_probs)
+    is_today = game_date == today_pt().isoformat()
+    # Skip live ScraperAPI call for past/future dates — DB already has series odds from when
+    # those dates were current. Live fetch only makes sense for today.
+    if is_today:
+        series_win_probs = fetch_series_win_probs(series_standings, per_game_probs)
+    else:
+        from src.db import get_series_odds as _db_series
+        series_win_probs = {abbr: v["series_win_prob"] for abbr, v in _db_series().items()}
     used_ids = get_used_player_ids()
     ext_projs = load_external_projections()
 
     db_de = db_get_de_projections(game_date)  # DB first
-    is_today = game_date == today_pt().isoformat()
     # Only fall back to live DE / live game lines for today's date.
     # For past dates the live APIs return today's data which would be wrong.
     de_projs = db_de if db_de else (fetch_draftedge_projections() if is_today else {})
