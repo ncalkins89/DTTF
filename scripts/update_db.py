@@ -118,13 +118,10 @@ def update_series_standings(season: str) -> None:
 
 
 def update_series_odds() -> None:
-    _step(4, "Series odds (DraftKings via ScraperAPI)")
+    _step(4, "Series odds (DraftKings cat 1264 + cat 487 moneyline for Game 7s)")
     import sqlite3
     from datetime import datetime, timedelta
-    from src.db import DB_PATH, get_series_standings as db_standings
-    from src.data_fetcher import CURRENT_SEASON
-    from nba_api.stats.static import teams as nba_teams
-    team_map = {t["id"]: t["abbreviation"] for t in nba_teams.get_teams()}
+    from src.db import DB_PATH
 
     try:
         with sqlite3.connect(DB_PATH) as cx:
@@ -141,25 +138,22 @@ def update_series_odds() -> None:
     from src.series_odds import fetch_series_win_probs
     result = fetch_series_win_probs(force_refresh=True)
 
-    # Cross-check: warn about active series not covered by DK result
-    standings = db_standings(CURRENT_SEASON) or []
-    for s in standings:
+    missing = []
+    from src.db import get_series_standings as db_standings
+    from src.data_fetcher import CURRENT_SEASON
+    from nba_api.stats.static import teams as nba_teams
+    team_map = {t["id"]: t["abbreviation"] for t in nba_teams.get_teams()}
+    for s in (db_standings(CURRENT_SEASON) or []):
         if s["home_wins"] >= 4 or s["away_wins"] >= 4:
-            continue  # series decided — don't expect odds
-        h = team_map.get(s["home_team_id"], str(s["home_team_id"]))
-        a = team_map.get(s["away_team_id"], str(s["away_team_id"]))
-        missing = [abbr for abbr in [h, a] if abbr not in result]
-        if missing:
-            wins = f"{s['home_wins']}-{s['away_wins']}"
-            print(
-                f"  [WARNING] Series {h} {wins} {a}: {', '.join(missing)} missing from DK result. "
-                f"{'(Known gap: DK drops Series Winner market for 3-3 Game 7s)' if s['home_wins']==3 and s['away_wins']==3 else '(Possible scraper failure)'}"
-            )
+            continue
+        for tid in [s["home_team_id"], s["away_team_id"]]:
+            abbr = team_map.get(tid, str(tid))
+            if abbr not in result:
+                missing.append(abbr)
+    if missing:
+        print(f"  [ERROR] Still missing after both DK categories: {', '.join(missing)}")
 
-    if not result:
-        print("  No series odds returned from DK.")
-    else:
-        print(f"  {len(result) // 2} series loaded.")
+    print(f"  {len(result) // 2} series loaded ({len(result)} teams).")
 
 
 def update_fd_projections(game_date: str) -> None:

@@ -151,7 +151,24 @@ def init_db() -> None:
             series_win_prob  REAL NOT NULL,
             american_odds    INTEGER,
             opponent_abbr    TEXT,
+            odds_source      TEXT,
             fetched_at       TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS dk_odds_audit (
+            id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+            checked_at          TEXT NOT NULL,
+            home_abbr           TEXT NOT NULL,
+            away_abbr           TEXT NOT NULL,
+            home_wins           INTEGER NOT NULL,
+            away_wins           INTEGER NOT NULL,
+            game_number         INTEGER NOT NULL,
+            in_cat1264          INTEGER NOT NULL,
+            in_cat487_ml        INTEGER NOT NULL,
+            cat1264_home_odds   INTEGER,
+            cat1264_away_odds   INTEGER,
+            cat487_home_odds    INTEGER,
+            cat487_away_odds    INTEGER
         );
 
         CREATE TABLE IF NOT EXISTS league_picks (
@@ -637,17 +654,39 @@ def get_model_projections(game_date: str) -> list[dict]:
 
 
 def upsert_series_odds(data: dict) -> None:
-    """data: {team_abbr: {"series_win_prob": float, "american_odds": int, "opponent_abbr": str}}"""
+    """data: {team_abbr: {"series_win_prob": float, "american_odds": int, "opponent_abbr": str, "odds_source": str}}"""
     from datetime import datetime, timezone
     now = datetime.now(timezone.utc).isoformat()
     with _conn() as cx:
         cx.executemany(
             """INSERT OR REPLACE INTO series_odds
-               (team_abbr, series_win_prob, american_odds, opponent_abbr, fetched_at)
-               VALUES (?, ?, ?, ?, ?)""",
+               (team_abbr, series_win_prob, american_odds, opponent_abbr, odds_source, fetched_at)
+               VALUES (?, ?, ?, ?, ?, ?)""",
             [
-                (abbr, v["series_win_prob"], v.get("american_odds"), v.get("opponent_abbr"), now)
+                (abbr, v["series_win_prob"], v.get("american_odds"),
+                 v.get("opponent_abbr"), v.get("odds_source"), now)
                 for abbr, v in data.items()
+            ],
+        )
+
+
+def log_dk_odds_audit(records: list[dict]) -> None:
+    """Append audit rows recording which DK categories covered each active series."""
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc).isoformat()
+    with _conn() as cx:
+        cx.executemany(
+            """INSERT INTO dk_odds_audit
+               (checked_at, home_abbr, away_abbr, home_wins, away_wins, game_number,
+                in_cat1264, in_cat487_ml,
+                cat1264_home_odds, cat1264_away_odds, cat487_home_odds, cat487_away_odds)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            [
+                (now, r["home_abbr"], r["away_abbr"], r["home_wins"], r["away_wins"],
+                 r["game_number"], r["in_cat1264"], r["in_cat487_ml"],
+                 r.get("cat1264_home_odds"), r.get("cat1264_away_odds"),
+                 r.get("cat487_home_odds"), r.get("cat487_away_odds"))
+                for r in records
             ],
         )
 

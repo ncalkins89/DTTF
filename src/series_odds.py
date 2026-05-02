@@ -1,17 +1,20 @@
 """
-series_odds.py — fetch NBA playoff series winner odds from DraftKings REST API.
+series_odds.py — fetch NBA playoff series win probabilities from DraftKings.
 
-Uses the public DraftKings Nash API (no auth, no Playwright required).
-Returns {team_abbr: {"series_win_prob": float, "american_odds": int, "opponent_abbr": str}}
+Primary source: category 1264 (Series Winner market).
+Fallback for 3-3 (Game 7) series: category 487 (Game Lines moneyline).
+When a series is at 3-3, the game moneyline equals the series win probability.
+
+Also logs every fetch to dk_odds_audit so we can track whether:
+  - Any Game 7 series ever appear in cat 1264 (contradicts the theory)
+  - Any non-Game 7 series ever go missing from cat 1264 (also interesting)
 """
-import re
-
 import requests
 from nba_api.stats.static import teams as nba_teams
 
-_DK_API_URL = (
-    "https://sportsbook-nash.draftkings.com/api/sportscontent"
-    "/dkusnj/v1/leagues/42648/categories/1264"
+_DK_BASE = (
+    "https://sportsbook-nash.draftkings.com"
+    "/api/sportscontent/dkusnj/v1/leagues/42648"
 )
 _HEADERS = {
     "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
@@ -33,7 +36,7 @@ def _normalize_pair(p1: float, p2: float) -> tuple[float, float]:
 
 
 def _parse_american(s: str) -> int | None:
-    s = s.replace("\u2212", "-").replace("\u2013", "-").strip()
+    s = s.replace("−", "-").replace("–", "-").strip()
     try:
         return int(s)
     except ValueError:
@@ -41,7 +44,6 @@ def _parse_american(s: str) -> int | None:
 
 
 def _nickname_to_abbr() -> dict[str, str]:
-    """Map team nickname (e.g. 'Spurs') and city/full variants to abbreviation."""
     result = {}
     for t in nba_teams.get_teams():
         result[t["nickname"].lower()] = t["abbreviation"]
@@ -50,15 +52,19 @@ def _nickname_to_abbr() -> dict[str, str]:
     return result
 
 
-def _fetch_dk_api() -> dict[str, dict]:
+def _dk_get(path: str) -> dict:
+    """GET a DK Nash API path, routing through ScraperAPI if SCRAPER_API_KEY is set.
+    Raises on HTTP or timeout errors — no silent fallback.
+    """
     import os
-    scraper_key = os.environ.get("SCRAPER_API_KEY", "")
-    if scraper_key:
-        fetch_url = f"https://api.scraperapi.com?api_key={scraper_key}&url={requests.utils.quote(_DK_API_URL, safe='')}"
-        print("[series_odds] fetching via ScraperAPI")
+    url = _DK_BASE + path
+    key = os.environ.get("SCRAPER_API_KEY", "")
+    if key:
+        fetch_url = "https://api.scraperapi.com?api_key=" + key + "&url=" + requests.utils.quote(url, safe="")
+        print(f"[series_odds] fetching {path} via ScraperAPI")
     else:
-        fetch_url = _DK_API_URL
-        print("[series_odds] fetching direct (no SCRAPER_API_KEY)")
+        fetch_url = url
+        print(f"[series_odds] fetching {path} direct (no SCRAPER_API_KEY)")
 
     for attempt in range(3):
         try:
@@ -69,95 +75,175 @@ def _fetch_dk_api() -> dict[str, dict]:
                 raise
             continue
     resp.raise_for_status()
-    data = resp.json()
+    return resp.json()
 
+
+def _parse_series_winner(data: dict) -> dict[str, dict]:
+    """Parse category 1264 (Series Winner) response.
+    Returns {team_abbr: {series_win_prob, american_odds, opponent_abbr, odds_source}}
+    """
     nick_map = _nickname_to_abbr()
 
-    # Build event → participants map
-    event_participants: dict[str, list[dict]] = {}
-    for event in data.get("events", []):
-        eid = event["id"]
-        event_participants[eid] = [p["name"] for p in event.get("participants", [])]
-
-    # Build market → event map
-    market_to_event: dict[str, str] = {
+    market_to_event = {
         m["id"]: m["eventId"]
         for m in data.get("markets", [])
         if m.get("name") == "Series Winner"
     }
 
-    # Group selections by market
     by_market: dict[str, list[dict]] = {}
     for sel in data.get("selections", []):
-        mid = sel.get("marketId", "")
-        by_market.setdefault(mid, []).append(sel)
+        by_market.setdefault(sel.get("marketId", ""), []).append(sel)
 
     results: dict[str, dict] = {}
-
     for market_id, sels in by_market.items():
-        if len(sels) != 2:
-            continue
-        eid = market_to_event.get(market_id)
-        if eid is None:
+        if len(sels) != 2 or market_id not in market_to_event:
             continue
 
         parsed = []
         for sel in sels:
-            odds_str = sel.get("displayOdds", {}).get("american", "")
-            odds = _parse_american(odds_str)
+            odds = _parse_american(sel.get("displayOdds", {}).get("american", ""))
             nickname = (sel.get("participants") or [{}])[0].get("seoIdentifier", "")
             abbr = nick_map.get(nickname.lower())
-            if odds is None or not abbr:
-                # Try label as fallback
+            if not abbr:
                 label = sel.get("label", "")
-                # label is like "SA Spurs" or "NY Knicks" — try last word as nickname
-                last_word = label.split()[-1].lower() if label else ""
-                abbr = abbr or nick_map.get(last_word)
+                abbr = nick_map.get(label.lower()) or nick_map.get(label.split()[-1].lower() if label else "")
             if odds is not None and abbr:
                 parsed.append((abbr, odds))
 
         if len(parsed) != 2:
-            # Log unmatched
             for sel in sels:
                 nick = (sel.get("participants") or [{}])[0].get("seoIdentifier", "?")
-                print(f"[series_odds] unmatched: '{nick}'")
+                print(f"[series_odds] cat1264 unmatched: '{nick}'")
             continue
 
-        (abbr1, odds1), (abbr2, odds2) = parsed
-        p1 = american_to_prob(odds1)
-        p2 = american_to_prob(odds2)
-        p1n, p2n = _normalize_pair(p1, p2)
+        (a1, o1), (a2, o2) = parsed
+        p1, p2 = _normalize_pair(american_to_prob(o1), american_to_prob(o2))
+        results[a1] = {"series_win_prob": round(p1, 3), "american_odds": o1, "opponent_abbr": a2, "odds_source": "dk_cat1264"}
+        results[a2] = {"series_win_prob": round(p2, 3), "american_odds": o2, "opponent_abbr": a1, "odds_source": "dk_cat1264"}
+        print(f"[series_odds] cat1264  {a1} {o1:+d} ({p1:.1%}) vs {a2} {o2:+d} ({p2:.1%})")
 
-        results[abbr1] = {
-            "series_win_prob": round(p1n, 3),
-            "american_odds": odds1,
-            "opponent_abbr": abbr2,
-        }
-        results[abbr2] = {
-            "series_win_prob": round(p2n, 3),
-            "american_odds": odds2,
-            "opponent_abbr": abbr1,
-        }
-        print(f"[series_odds] {abbr1} {odds1:+d} ({p1n:.1%}) vs {abbr2} {odds2:+d} ({p2n:.1%})")
+    return results
+
+
+def _parse_game_moneylines(data: dict) -> dict[str, dict]:
+    """Parse category 487 (Game Lines) Moneyline selections.
+    Returns {team_abbr: {series_win_prob, american_odds, opponent_abbr, odds_source}}
+    """
+    nick_map = _nickname_to_abbr()
+
+    market_to_event = {
+        m["id"]: m["eventId"]
+        for m in data.get("markets", [])
+        if m.get("name") == "Moneyline"
+    }
+
+    by_market: dict[str, list[dict]] = {}
+    for sel in data.get("selections", []):
+        by_market.setdefault(sel.get("marketId", ""), []).append(sel)
+
+    results: dict[str, dict] = {}
+    for market_id, sels in by_market.items():
+        if len(sels) != 2 or market_id not in market_to_event:
+            continue
+
+        parsed = []
+        for sel in sels:
+            odds = _parse_american(sel.get("displayOdds", {}).get("american", ""))
+            label = sel.get("label", "")
+            abbr = nick_map.get(label.lower()) or nick_map.get(label.split()[-1].lower() if label else "")
+            if odds is not None and abbr:
+                parsed.append((abbr, odds))
+
+        if len(parsed) != 2:
+            continue
+
+        (a1, o1), (a2, o2) = parsed
+        p1, p2 = _normalize_pair(american_to_prob(o1), american_to_prob(o2))
+        results[a1] = {"series_win_prob": round(p1, 3), "american_odds": o1, "opponent_abbr": a2, "odds_source": "dk_cat487_moneyline"}
+        results[a2] = {"series_win_prob": round(p2, 3), "american_odds": o2, "opponent_abbr": a1, "odds_source": "dk_cat487_moneyline"}
+        print(f"[series_odds] cat487ml {a1} {o1:+d} ({p1:.1%}) vs {a2} {o2:+d} ({p2:.1%})")
 
     return results
 
 
 def fetch_series_win_probs(force_refresh: bool = False) -> dict[str, dict]:
-    """Fetch series win probs from DK API and save to DB.
+    """Fetch series win probabilities from DK and save to DB.
 
-    Raises on API failure — no silent fallback. Caller must handle or propagate.
-    Returns {team_abbr: {"series_win_prob": float, "american_odds": int, "opponent_abbr": str}}
+    - Cat 1264 (Series Winner) for all active series
+    - Cat 487 (Game Moneyline) as additional source for series not in cat 1264
+    - When a series is 3-3 (Game 7), game moneyline == series win probability
+    - Logs each observation to dk_odds_audit for long-run theory validation
+
+    Raises on API failure — no silent fallback.
     """
-    result = _fetch_dk_api()  # raises on network/parse failure
+    from src.db import (
+        get_series_standings,
+        upsert_series_odds,
+        log_dk_odds_audit,
+    )
+    from src.data_fetcher import CURRENT_SEASON
+    import nba_api.stats.static.teams as _nba_teams_mod
+
+    team_map = {t["id"]: t["abbreviation"] for t in _nba_teams_mod.get_teams()}
+
+    # Fetch both categories (raises on failure)
+    cat1264_data = _dk_get("/categories/1264")
+    cat487_data  = _dk_get("/categories/487")
+
+    sw_result = _parse_series_winner(cat1264_data)
+    ml_result = _parse_game_moneylines(cat487_data)
+
+    # Merge: cat1264 wins; cat487 fills gaps for series not in cat1264
+    result = dict(sw_result)
+    for abbr, v in ml_result.items():
+        if abbr not in result:
+            result[abbr] = v
+
+    # Audit: log observation for every active (non-decided) series
+    standings = get_series_standings(CURRENT_SEASON) or []
+    audit_records = []
+    for s in standings:
+        if s["home_wins"] >= 4 or s["away_wins"] >= 4:
+            continue
+        h = team_map.get(s["home_team_id"])
+        a = team_map.get(s["away_team_id"])
+        if not h or not a:
+            continue
+
+        in_sw  = int(h in sw_result)
+        in_ml  = int(h in ml_result)
+        gn     = s["home_wins"] + s["away_wins"] + 1
+
+        audit_records.append({
+            "home_abbr":         h,
+            "away_abbr":         a,
+            "home_wins":         s["home_wins"],
+            "away_wins":         s["away_wins"],
+            "game_number":       gn,
+            "in_cat1264":        in_sw,
+            "in_cat487_ml":      in_ml,
+            "cat1264_home_odds": sw_result.get(h, {}).get("american_odds"),
+            "cat1264_away_odds": sw_result.get(a, {}).get("american_odds"),
+            "cat487_home_odds":  ml_result.get(h, {}).get("american_odds"),
+            "cat487_away_odds":  ml_result.get(a, {}).get("american_odds"),
+        })
+
+        theory_ok = (gn == 7 and not in_sw) or (gn < 7 and in_sw)
+        if not theory_ok:
+            if gn == 7 and in_sw:
+                print(f"[series_odds] THEORY VIOLATION: Game 7 {h}/{a} HAS cat1264 Series Winner market")
+            elif gn < 7 and not in_sw:
+                print(f"[series_odds] THEORY VIOLATION: Game {gn} {h}/{a} MISSING from cat1264 (not a Game 7)")
+
+    if audit_records:
+        log_dk_odds_audit(audit_records)
+        print(f"[series_odds] logged {len(audit_records)} audit rows")
 
     if result:
-        from src.db import upsert_series_odds
         upsert_series_odds(result)
-        print(f"[series_odds] {len(result) // 2} series loaded from DK API, saved to DB")
+        print(f"[series_odds] saved {len(result) // 2} series to DB")
     else:
-        print("[series_odds] WARNING: DK API returned no Series Winner markets "
-              "(expected during Game 7 — DK doesn't post series winner when series is 3-3)")
+        print("[series_odds] WARNING: no series odds returned from either DK category")
 
     return result
 
