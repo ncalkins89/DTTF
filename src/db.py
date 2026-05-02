@@ -188,6 +188,12 @@ def init_db() -> None:
         except Exception:
             pass  # column already exists
 
+        # Migration: add odds_source column to series_odds
+        try:
+            cx.execute("ALTER TABLE series_odds ADD COLUMN odds_source TEXT")
+        except Exception:
+            pass  # column already exists
+
 
 @contextmanager
 def _conn():
