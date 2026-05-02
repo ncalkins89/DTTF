@@ -29,9 +29,7 @@ from src.data_fetcher import (
     get_active_roster,
     get_player_game_logs,
     get_player_game_logs_365,
-    get_series_standings,
     get_team_defense_ratings,
-    get_todays_games,
 )
 from src.odds import get_series_record_for_team
 
@@ -115,7 +113,7 @@ def _get_all_playoff_players() -> list[dict]:
     if _playoff_players_cache:
         return _playoff_players_cache
     from src.data_fetcher import CURRENT_SEASON
-    standings = db_get_series_standings(CURRENT_SEASON) or get_series_standings()
+    standings = db_get_series_standings(CURRENT_SEASON) or []
     seen_teams: set[int] = set()
     result = []
     for s in standings:
@@ -150,15 +148,14 @@ def build_todays_player_df(game_date: str | None = None, current_round: int = 1)
             return df
 
     # Prefer DB (load_db.py populates it each morning) → fall back to live fetch
-    games = db_get_schedule(game_date) or get_todays_games(game_date)
+    games = db_get_schedule(game_date)
     if not games:
         return pd.DataFrame()
 
     def_ratings = get_team_defense_ratings()
 
     from src.data_fetcher import CURRENT_SEASON
-    db_standings = db_get_series_standings(CURRENT_SEASON)  # DB first
-    series_standings = db_standings if db_standings else get_series_standings()
+    series_standings = db_get_series_standings(CURRENT_SEASON) or []
 
     # Fill in 0-0 entries for any series in today's games not already in standings.
     # Needed when viewing future dates — those series may not be in the DB yet.
@@ -2260,10 +2257,10 @@ def update_model_charts(player_id, decay_rate, tab):
         return empty, empty, empty, "", empty
 
     decay_rate = decay_rate if decay_rate is not None else 0.82
-    games = get_todays_games()
+    games = db_get_schedule(today_pt().isoformat())
     def_ratings = get_team_defense_ratings()
     from src.data_fetcher import CURRENT_SEASON as _CS2
-    series_standings = db_get_series_standings(_CS2) or get_series_standings()
+    series_standings = db_get_series_standings(_CS2) or []
     from src.db import get_series_odds as _db_series2
     series_win_probs = {abbr: v["series_win_prob"] for abbr, v in _db_series2().items()}
 
