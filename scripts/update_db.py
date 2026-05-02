@@ -41,38 +41,57 @@ def _step(n: int, label: str) -> None:
     print(f"\n[{n}] {label} ...", flush=True)
 
 
-def update_schedule(game_date: str) -> list[dict]:
-    _step(1, f"Schedule — {game_date}")
+def _get_live_games(game_date: str) -> list[dict]:
+    """Fetch games for a date from NBA API, filter phantom games using current standings."""
     from src.data_fetcher import CURRENT_SEASON, get_todays_games
     from src.db import get_series_standings as db_standings
     games = get_todays_games(game_date)
     if not games:
-        print("  No games found for this date.")
         return []
-
-    # Drop phantom games: NBA pre-populates Game 7 slots even when the series
-    # ended before Game 7. Filter out any game where either team already has 4 wins.
     standings = db_standings(CURRENT_SEASON) or []
     decided = set()
     for s in standings:
         if s["home_wins"] >= 4 or s["away_wins"] >= 4:
             decided.add(s["home_team_id"])
             decided.add(s["away_team_id"])
+    return [g for g in games
+            if g["home_team_id"] not in decided
+            and g["away_team_id"] not in decided]
 
-    live_games = [g for g in games
-                  if g["home_team_id"] not in decided
-                  and g["away_team_id"] not in decided]
-    dropped = len(games) - len(live_games)
-    if dropped:
-        print(f"  Dropped {dropped} phantom game(s) for already-decided series.")
 
+def update_schedule(game_date: str) -> list[dict]:
+    _step(1, f"Schedule — {game_date}")
+    live_games = _get_live_games(game_date)
     if not live_games:
-        print("  No live games after filtering.")
+        print("  No games found for this date (or all phantom).")
         return []
     upsert_schedule(live_games)
     for g in live_games:
         print(f"  {g['home_team_abbr']} vs {g['away_team_abbr']}")
     return live_games
+
+
+def update_upcoming_schedules(from_date: str, days: int = 14) -> None:
+    """Fetch and upsert schedules for the next `days` dates after from_date.
+
+    Run AFTER series standings are fresh so the phantom-game filter is accurate.
+    NBA pre-populates slots for all future rounds; this loop captures them all.
+    """
+    _step("3b", f"Upcoming schedules ({days}-day lookahead)")
+    from datetime import timedelta
+    base = date.fromisoformat(from_date)
+    found = 0
+    for days_ahead in range(1, days + 1):
+        fd = (base + timedelta(days=days_ahead)).isoformat()
+        live = _get_live_games(fd)
+        if live:
+            upsert_schedule(live)
+            matchups = ", ".join(f"{g['home_team_abbr']} vs {g['away_team_abbr']}" for g in live)
+            print(f"  {fd}: {matchups}")
+            found += 1
+        else:
+            print(f"  {fd}: no games")
+    print(f"  Done — found games on {found}/{days} dates.")
 
 
 def update_odds(game_date: str) -> None:
@@ -102,7 +121,11 @@ def update_series_odds() -> None:
     _step(4, "Series odds (DraftKings via ScraperAPI)")
     import sqlite3
     from datetime import datetime, timedelta
-    from src.db import DB_PATH
+    from src.db import DB_PATH, get_series_standings as db_standings
+    from src.data_fetcher import CURRENT_SEASON
+    from nba_api.stats.static import teams as nba_teams
+    team_map = {t["id"]: t["abbreviation"] for t in nba_teams.get_teams()}
+
     try:
         with sqlite3.connect(DB_PATH) as cx:
             row = cx.execute("SELECT MIN(fetched_at) FROM series_odds").fetchone()
@@ -114,10 +137,27 @@ def update_series_odds() -> None:
                 return
     except Exception:
         pass
+
     from src.series_odds import fetch_series_win_probs
     result = fetch_series_win_probs(force_refresh=True)
+
+    # Cross-check: warn about active series not covered by DK result
+    standings = db_standings(CURRENT_SEASON) or []
+    for s in standings:
+        if s["home_wins"] >= 4 or s["away_wins"] >= 4:
+            continue  # series decided — don't expect odds
+        h = team_map.get(s["home_team_id"], str(s["home_team_id"]))
+        a = team_map.get(s["away_team_id"], str(s["away_team_id"]))
+        missing = [abbr for abbr in [h, a] if abbr not in result]
+        if missing:
+            wins = f"{s['home_wins']}-{s['away_wins']}"
+            print(
+                f"  [WARNING] Series {h} {wins} {a}: {', '.join(missing)} missing from DK result. "
+                f"{'(Known gap: DK drops Series Winner market for 3-3 Game 7s)' if s['home_wins']==3 and s['away_wins']==3 else '(Possible scraper failure)'}"
+            )
+
     if not result:
-        print("  No series odds returned.")
+        print("  No series odds returned from DK.")
     else:
         print(f"  {len(result) // 2} series loaded.")
 
@@ -367,6 +407,7 @@ def main() -> None:
     games = update_schedule(args.date)
     update_odds(args.date)
     update_series_standings(CURRENT_SEASON)
+    update_upcoming_schedules(args.date)  # fetch all future dates with fresh standings
     if args.skip_series_odds:
         print("\n[4] Series odds — skipped (--skip-series-odds)")
     else:

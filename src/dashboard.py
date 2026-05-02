@@ -180,17 +180,6 @@ def build_todays_player_df(game_date: str | None = None, current_round: int = 1)
     per_game_probs = db_odds or {}
     from src.db import get_series_odds as _db_series
     series_win_probs = {abbr: v["series_win_prob"] for abbr, v in _db_series().items()}
-    # Game 7 override: DK doesn't post a series winner market when it's 3-3 (only game
-    # lines), so our DB value is stale from when the series was still multi-game.
-    # Use home-court-adjusted probability instead: ~55% home / 45% away.
-    for s in series_standings:
-        if s["home_wins"] == 3 and s["away_wins"] == 3:
-            home_abbr = TEAM_MAP.get(s["home_team_id"], "")
-            away_abbr = TEAM_MAP.get(s["away_team_id"], "")
-            if home_abbr:
-                series_win_probs[home_abbr] = 0.55
-            if away_abbr:
-                series_win_probs[away_abbr] = 0.45
     used_ids = get_used_player_ids()
     ext_projs = load_external_projections()
 
@@ -725,6 +714,17 @@ app.layout = dbc.Container(
         dcc.Interval(id="startup-check", interval=500, max_intervals=1),
         dcc.Interval(id="date-init", interval=100, max_intervals=1),
 
+        # ── Data issues popup ────────────────────────────────────────────
+        dbc.Modal(
+            id="data-issues-modal",
+            is_open=False,
+            children=[
+                dbc.ModalHeader(dbc.ModalTitle("⚠ Data Issues Detected")),
+                dbc.ModalBody(id="data-issues-modal-body"),
+                dbc.ModalFooter(dbc.Button("Dismiss", id="data-issues-dismiss", className="ms-auto")),
+            ],
+        ),
+
         # ── Header ──────────────────────────────────────────────────────
         dbc.Row([
             dbc.Col(html.H4("🏀 Drive to the Finals",
@@ -1057,6 +1057,112 @@ def run_load_db(_, selected_date):
         )
     threading.Thread(target=_run, daemon=True).start()
     return "Loading in background…", "info", load_date
+
+
+def _get_data_issues() -> list[str]:
+    """Return a list of human-readable issue strings for stale/missing scraper data."""
+    import sqlite3
+    from src.db import DB_PATH
+    issues = []
+    now = datetime.now(timezone.utc)
+    today = today_pt().isoformat()
+
+    try:
+        with sqlite3.connect(DB_PATH) as cx:
+            cx.row_factory = sqlite3.Row
+
+            # Check series odds staleness for active (non-decided) series
+            standings = cx.execute(
+                "SELECT home_team_id, away_team_id, home_wins, away_wins FROM series_standings"
+            ).fetchall()
+            decided_ids = set()
+            active_teams = []  # list of (team_id,) for non-decided
+            for s in standings:
+                if s["home_wins"] >= 4 or s["away_wins"] >= 4:
+                    decided_ids.add(s["home_team_id"])
+                    decided_ids.add(s["away_team_id"])
+                else:
+                    active_teams.append(s["home_team_id"])
+                    active_teams.append(s["away_team_id"])
+
+            if active_teams:
+                team_abbr_map = {t["id"]: t["abbreviation"] for t in nba_teams.get_teams()}
+                odds_rows = cx.execute(
+                    "SELECT team_abbr, fetched_at FROM series_odds"
+                ).fetchall()
+                odds_by_abbr = {r["team_abbr"]: r["fetched_at"] for r in odds_rows}
+
+                stale_thresh = 12 * 3600  # 12 hours
+                missing_abbrs = []
+                stale_abbrs = []
+                for tid in active_teams:
+                    abbr = team_abbr_map.get(tid, str(tid))
+                    if abbr not in odds_by_abbr:
+                        missing_abbrs.append(abbr)
+                    else:
+                        age = (now - datetime.fromisoformat(
+                            odds_by_abbr[abbr].replace("Z", "+00:00")
+                        )).total_seconds()
+                        if age > stale_thresh:
+                            stale_abbrs.append(f"{abbr} ({int(age/3600)}h)")
+                if missing_abbrs:
+                    issues.append(f"Series odds MISSING for: {', '.join(missing_abbrs)}")
+                if stale_abbrs:
+                    issues.append(f"Series odds STALE (>12h) for: {', '.join(stale_abbrs)}")
+
+            # Check FD projections for today
+            fd_count = cx.execute(
+                "SELECT COUNT(*) FROM fd_projections WHERE date=?", (today,)
+            ).fetchone()[0]
+            if fd_count == 0:
+                issues.append(f"FanDuel projections missing for {today}")
+
+            # Check DE projections for today
+            de_count = cx.execute(
+                "SELECT COUNT(*) FROM de_projections WHERE date=?", (today,)
+            ).fetchone()[0]
+            if de_count == 0:
+                issues.append(f"DraftEdge projections missing for {today}")
+
+            # Check injuries staleness (>12h)
+            inj_row = cx.execute(
+                "SELECT MAX(fetched_at) FROM injuries"
+            ).fetchone()
+            if inj_row and inj_row[0]:
+                inj_age = (now - datetime.fromisoformat(
+                    inj_row[0].replace("Z", "+00:00")
+                )).total_seconds()
+                if inj_age > 12 * 3600:
+                    issues.append(f"Injury data stale ({int(inj_age/3600)}h old)")
+            else:
+                issues.append("Injury data missing")
+
+    except Exception as e:
+        issues.append(f"DB check error: {e}")
+
+    return issues
+
+
+@app.callback(
+    Output("data-issues-modal", "is_open"),
+    Output("data-issues-modal-body", "children"),
+    Input("startup-check", "n_intervals"),
+    Input("data-issues-dismiss", "n_clicks"),
+    prevent_initial_call=False,
+)
+def check_data_issues(_, dismiss_clicks):
+    triggered = callback_context.triggered_id
+    if triggered == "data-issues-dismiss":
+        return False, dash.no_update
+
+    issues = _get_data_issues()
+    if not issues:
+        return False, []
+
+    return True, html.Ul([
+        html.Li(issue, style={"color": "#dc2626", "marginBottom": "4px"})
+        for issue in issues
+    ])
 
 
 # ── Tab routing ─────────────────────────────────────────────────────────────

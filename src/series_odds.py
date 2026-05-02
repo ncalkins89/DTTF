@@ -144,19 +144,20 @@ def _fetch_dk_api() -> dict[str, dict]:
 
 
 def fetch_series_win_probs(force_refresh: bool = False) -> dict[str, dict]:
-    """Returns {team_abbr: {"series_win_prob": float, "american_odds": int, "opponent_abbr": str}}"""
-    try:
-        result = _fetch_dk_api()
-    except Exception as e:
-        print(f"[series_odds] API fetch failed: {e}")
-        result = {}
+    """Fetch series win probs from DK API and save to DB.
+
+    Raises on API failure — no silent fallback. Caller must handle or propagate.
+    Returns {team_abbr: {"series_win_prob": float, "american_odds": int, "opponent_abbr": str}}
+    """
+    result = _fetch_dk_api()  # raises on network/parse failure
 
     if result:
         from src.db import upsert_series_odds
         upsert_series_odds(result)
         print(f"[series_odds] {len(result) // 2} series loaded from DK API, saved to DB")
     else:
-        print("[series_odds] fetch failed — returning empty")
+        print("[series_odds] WARNING: DK API returned no Series Winner markets "
+              "(expected during Game 7 — DK doesn't post series winner when series is 3-3)")
 
     return result
 
