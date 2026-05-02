@@ -180,6 +180,17 @@ def build_todays_player_df(game_date: str | None = None, current_round: int = 1)
     per_game_probs = db_odds or {}
     from src.db import get_series_odds as _db_series
     series_win_probs = {abbr: v["series_win_prob"] for abbr, v in _db_series().items()}
+    # Game 7 override: DK doesn't post a series winner market when it's 3-3 (only game
+    # lines), so our DB value is stale from when the series was still multi-game.
+    # Use home-court-adjusted probability instead: ~55% home / 45% away.
+    for s in series_standings:
+        if s["home_wins"] == 3 and s["away_wins"] == 3:
+            home_abbr = TEAM_MAP.get(s["home_team_id"], "")
+            away_abbr = TEAM_MAP.get(s["away_team_id"], "")
+            if home_abbr:
+                series_win_probs[home_abbr] = 0.55
+            if away_abbr:
+                series_win_probs[away_abbr] = 0.45
     used_ids = get_used_player_ids()
     ext_projs = load_external_projections()
 
