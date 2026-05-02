@@ -282,7 +282,16 @@ def get_schedule(game_date: str) -> list[dict]:
         rows = cx.execute(
             "SELECT * FROM schedule WHERE game_date = ?", (game_date,)
         ).fetchall()
-    return [dict(r) for r in rows]
+        # Filter out phantom games (NBA pre-schedules Game 7 slots).
+        # A game is phantom if either team already has 4 wins in series standings.
+        standings = cx.execute("SELECT home_team_id, away_team_id, home_wins, away_wins FROM series_standings").fetchall()
+    decided = set()
+    for s in standings:
+        if s["home_wins"] >= 4 or s["away_wins"] >= 4:
+            decided.add(s["home_team_id"])
+            decided.add(s["away_team_id"])
+    return [dict(r) for r in rows
+            if r["home_team_id"] not in decided and r["away_team_id"] not in decided]
 
 
 def get_odds(game_date: str) -> dict[str, float]:

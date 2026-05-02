@@ -44,14 +44,35 @@ def _step(n: int, label: str) -> None:
 def update_schedule(game_date: str) -> list[dict]:
     _step(1, f"Schedule — {game_date}")
     from src.data_fetcher import CURRENT_SEASON, get_todays_games
+    from src.db import get_series_standings as db_standings
     games = get_todays_games(game_date)
     if not games:
         print("  No games found for this date.")
         return []
-    upsert_schedule(games)
-    for g in games:
+
+    # Drop phantom games: NBA pre-populates Game 7 slots even when the series
+    # ended before Game 7. Filter out any game where either team already has 4 wins.
+    standings = db_standings(CURRENT_SEASON) or []
+    decided = set()
+    for s in standings:
+        if s["home_wins"] >= 4 or s["away_wins"] >= 4:
+            decided.add(s["home_team_id"])
+            decided.add(s["away_team_id"])
+
+    live_games = [g for g in games
+                  if g["home_team_id"] not in decided
+                  and g["away_team_id"] not in decided]
+    dropped = len(games) - len(live_games)
+    if dropped:
+        print(f"  Dropped {dropped} phantom game(s) for already-decided series.")
+
+    if not live_games:
+        print("  No live games after filtering.")
+        return []
+    upsert_schedule(live_games)
+    for g in live_games:
         print(f"  {g['home_team_abbr']} vs {g['away_team_abbr']}")
-    return games
+    return live_games
 
 
 def update_odds(game_date: str) -> None:
