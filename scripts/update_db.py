@@ -334,6 +334,8 @@ def main() -> None:
                         help="Game date to load (YYYY-MM-DD, default: today)")
     parser.add_argument("--skip-logs", action="store_true",
                         help="Skip per-player game log fetch (faster, ~10s vs ~5min)")
+    parser.add_argument("--skip-series-odds", action="store_true",
+                        help="Skip series odds ScraperAPI fetch (run via separate 4h cron)")
     args = parser.parse_args()
 
     from src.data_fetcher import CURRENT_SEASON, PRIOR_SEASON
@@ -344,7 +346,10 @@ def main() -> None:
     games = update_schedule(args.date)
     update_odds(args.date)
     update_series_standings(CURRENT_SEASON)
-    update_series_odds()
+    if args.skip_series_odds:
+        print("\n[4] Series odds — skipped (--skip-series-odds)")
+    else:
+        update_series_odds()
     update_fd_projections(args.date)
     update_injuries()
     update_de_projections(args.date)
