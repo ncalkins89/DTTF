@@ -88,16 +88,16 @@ def update_schedule(game_date: str) -> list[dict]:
 
 
 def update_upcoming_schedules(from_date: str, days: int = 14) -> None:
-    """Fetch and upsert schedules for the next `days` dates after from_date.
+    """Fetch and upsert schedules for today + the next `days` dates.
 
-    Run AFTER series standings are fresh so the phantom-game filter is accurate.
-    NBA pre-populates slots for all future rounds; this loop captures them all.
+    Includes today (days_ahead=0) so the phantom filter uses fresh standings
+    when deciding whether today's games are real. Run AFTER series standings.
     """
-    _step("3b", f"Upcoming schedules ({days}-day lookahead)")
+    _step("3b", f"Upcoming schedules (today + {days}-day lookahead)")
     from datetime import timedelta
     base = date.fromisoformat(from_date)
     found = 0
-    for days_ahead in range(1, days + 1):
+    for days_ahead in range(0, days + 1):
         fd = (base + timedelta(days=days_ahead)).isoformat()
         live = _get_live_games(fd)
         if live:
@@ -107,7 +107,7 @@ def update_upcoming_schedules(from_date: str, days: int = 14) -> None:
             found += 1
         else:
             print(f"  {fd}: no games")
-    print(f"  Done — found games on {found}/{days} dates.")
+    print(f"  Done — found games on {found}/{days + 1} dates.")
 
 
 def update_odds(game_date: str) -> None:
