@@ -171,6 +171,15 @@ def init_db() -> None:
             cat487_away_odds    INTEGER
         );
 
+        CREATE TABLE IF NOT EXISTS scraping_errors (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            logged_at   TEXT NOT NULL,
+            source      TEXT NOT NULL,
+            error_msg   TEXT NOT NULL,
+            resolved    INTEGER NOT NULL DEFAULT 0,
+            resolved_at TEXT
+        );
+
         CREATE TABLE IF NOT EXISTS league_picks (
             username    TEXT NOT NULL,
             game_date   TEXT NOT NULL,
@@ -714,6 +723,42 @@ def get_series_odds() -> dict:
             "SELECT team_abbr, series_win_prob, american_odds, opponent_abbr FROM series_odds"
         ).fetchall()
     return {r["team_abbr"]: dict(r) for r in rows}
+
+
+def log_scraping_error(source: str, error_msg: str) -> None:
+    """Record a scraping failure. Call resolve_scraping_errors(source) on next success."""
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc).isoformat()
+    with _conn() as cx:
+        cx.execute(
+            "INSERT INTO scraping_errors (logged_at, source, error_msg) VALUES (?, ?, ?)",
+            (now, source, error_msg),
+        )
+
+
+def resolve_scraping_errors(source: str) -> None:
+    """Mark all unresolved errors for this source as resolved."""
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc).isoformat()
+    with _conn() as cx:
+        cx.execute(
+            "UPDATE scraping_errors SET resolved=1, resolved_at=? WHERE source=? AND resolved=0",
+            (now, source),
+        )
+
+
+def get_unresolved_scraping_errors(max_age_hours: int = 48) -> list[dict]:
+    """Return unresolved scraping errors logged within the last max_age_hours."""
+    from datetime import datetime, timezone, timedelta
+    cutoff = (datetime.now(timezone.utc) - timedelta(hours=max_age_hours)).isoformat()
+    with _conn() as cx:
+        rows = cx.execute(
+            """SELECT source, error_msg, logged_at FROM scraping_errors
+               WHERE resolved=0 AND logged_at >= ?
+               GROUP BY source ORDER BY logged_at DESC""",
+            (cutoff,),
+        ).fetchall()
+    return [dict(r) for r in rows]
 
 
 def get_known_game_dates() -> list[str]:

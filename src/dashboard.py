@@ -1107,6 +1107,14 @@ def _get_data_issues() -> list[str]:
     except Exception as e:
         issues.append(f"Data check error: {e}")
 
+    # Scraping errors: pull from DB log — these are explicit failures from cron
+    try:
+        from src.db import get_unresolved_scraping_errors
+        for err in get_unresolved_scraping_errors(max_age_hours=48):
+            issues.append(f"Scraper failure [{err['source']}]: {err['error_msg']}")
+    except Exception as e:
+        issues.append(f"Could not read scraping error log: {e}")
+
     return issues
 
 

@@ -34,6 +34,8 @@ from src.db import (
     get_def_ratings,
     get_de_projections,
     get_fd_projections,
+    log_scraping_error,
+    resolve_scraping_errors,
 )
 
 
@@ -155,6 +157,7 @@ def update_series_odds() -> None:
 
     from src.series_odds import fetch_series_win_probs
     result = fetch_series_win_probs(force_refresh=True)
+    resolve_scraping_errors("series_odds")
 
     missing = []
     from src.db import get_series_standings as db_standings
@@ -178,10 +181,16 @@ def update_fd_projections(game_date: str) -> None:
     _step(5, "FanDuel projections")
     from src.external import fetch_fanduel_projections
     from nba_api.stats.static import players as nba_players
-    projs = fetch_fanduel_projections()
+    try:
+        projs = fetch_fanduel_projections()
+    except Exception as e:
+        print(f"  FAILED: {e}")
+        log_scraping_error("fd_projections", str(e))
+        return
     if not projs:
         print("  No projections found (no slate today?).")
         return
+    resolve_scraping_errors("fd_projections")
     upsert_fd_projections(game_date, projs)
     id_to_name = {p["id"]: p["full_name"] for p in nba_players.get_players()}
     for pid, p in sorted(projs.items(), key=lambda x: -(x[1]["pra"] or 0))[:10]:
@@ -193,10 +202,16 @@ def update_fd_projections(game_date: str) -> None:
 def update_injuries() -> None:
     _step(6, "Injuries (ESPN)")
     from src.external import fetch_injuries
-    injuries = fetch_injuries()
+    try:
+        injuries = fetch_injuries()
+    except Exception as e:
+        print(f"  FAILED: {e}")
+        log_scraping_error("injuries", str(e))
+        return
     if not injuries:
         print("  No injury data returned.")
         return
+    resolve_scraping_errors("injuries")
     upsert_injuries(injuries)
     out = [n for n, v in injuries.items() if v.get("status") == "Out"]
     dtd = [n for n, v in injuries.items() if v.get("status") == "Day-To-Day"]
@@ -207,10 +222,16 @@ def update_de_projections(game_date: str) -> None:
     _step(7, "DraftEdge projections")
     from src.external import fetch_draftedge_projections
     from nba_api.stats.static import players as nba_players
-    projs = fetch_draftedge_projections()
+    try:
+        projs = fetch_draftedge_projections()
+    except Exception as e:
+        print(f"  FAILED: {e}")
+        log_scraping_error("de_projections", str(e))
+        return
     if not projs:
         print("  No projections found.")
         return
+    resolve_scraping_errors("de_projections")
     upsert_de_projections(game_date, projs)
     id_to_name = {p["id"]: p["full_name"] for p in nba_players.get_players()}
     for pid, p in sorted(projs.items(), key=lambda x: -x[1]["pra"])[:10]:
@@ -426,7 +447,9 @@ def main() -> None:
         try:
             update_series_odds()
         except Exception as e:
-            print(f"\n[4] Series odds FAILED (cron continues): {e}")
+            msg = str(e)
+            print(f"\n[4] Series odds FAILED (cron continues): {msg}")
+            log_scraping_error("series_odds", msg)
     update_fd_projections(args.date)
     update_injuries()
     update_de_projections(args.date)
