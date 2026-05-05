@@ -815,7 +815,7 @@ def render_schedule_strip(store_data, _sentinel):
             away_p = 1.0 - home_p
         else:
             home_p = r["series_win_prob_raw"]
-            away_p = round(1 - home_p, 3)
+            away_p = round(1 - home_p, 3) if home_p is not None else None
 
         if is_past:
             game_num = home_w + away_w
@@ -833,12 +833,12 @@ def render_schedule_strip(store_data, _sentinel):
                 html.Span(home, style={"fontWeight": "700", "fontSize": "15px"}),
                 html.Span(f" {home_w}-{home_l}", style={"color": "#6e6e73", "fontSize": "12px", "marginLeft": "3px"}),
                 html.Span("  ", style={"margin": "0 2px"}),
-                pct_span(home_p),
+                *([pct_span(home_p)] if home_p is not None else []),
                 html.Span(" @ ", style={"color": "#aaa", "margin": "0 7px", "fontSize": "13px"}),
                 html.Span(away, style={"fontWeight": "700", "fontSize": "15px"}),
                 html.Span(f" {away_w}-{away_l}", style={"color": "#6e6e73", "fontSize": "12px", "marginLeft": "3px"}),
                 html.Span("  ", style={"margin": "0 2px"}),
-                pct_span(away_p),
+                *([pct_span(away_p)] if away_p is not None else []),
             ]),
         ], className="schedule-chip"))
 
