@@ -305,14 +305,24 @@ def get_schedule(game_date: str) -> list[dict]:
         rows = cx.execute(
             "SELECT * FROM schedule WHERE game_date = ?", (game_date,)
         ).fetchall()
-        # Filter out phantom games (NBA pre-schedules Game 7 slots).
-        # A game is phantom if either team already has 4 wins in series standings.
-        standings = cx.execute("SELECT home_team_id, away_team_id, home_wins, away_wins FROM series_standings").fetchall()
-    decided = set()
+        # Filter phantom games (NBA pre-populates all future round/game-7 slots).
+        # A team is "decided" (out of the playoffs) only if every series they appear in
+        # has a winner AND they have no active series. Teams that won Round 1 and are
+        # playing Round 2 have >=4 wins in one series AND an active (0-0) second series,
+        # so they must NOT be filtered.
+        standings = cx.execute(
+            "SELECT home_team_id, away_team_id, home_wins, away_wins FROM series_standings"
+        ).fetchall()
+    has_4_wins: set[int] = set()
+    active: set[int] = set()
     for s in standings:
         if s["home_wins"] >= 4 or s["away_wins"] >= 4:
-            decided.add(s["home_team_id"])
-            decided.add(s["away_team_id"])
+            has_4_wins.add(s["home_team_id"])
+            has_4_wins.add(s["away_team_id"])
+        else:
+            active.add(s["home_team_id"])
+            active.add(s["away_team_id"])
+    decided = has_4_wins - active
     return [dict(r) for r in rows
             if r["home_team_id"] not in decided and r["away_team_id"] not in decided]
 

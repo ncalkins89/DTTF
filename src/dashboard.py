@@ -1026,8 +1026,16 @@ def check_db_status(_):
     )
 
 
+def _parse_dt_utc(s: str) -> datetime:
+    """Parse an ISO datetime string to a UTC-aware datetime, handling both naive and aware."""
+    dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
 def _get_data_issues() -> list[str]:
-    """Return a list of human-readable issue strings for stale/missing scraper data."""
+    """Return issue strings only for data that is actually stale/missing in a way that matters."""
     import sqlite3
     from src.db import DB_PATH
     issues = []
@@ -1038,74 +1046,66 @@ def _get_data_issues() -> list[str]:
         with sqlite3.connect(DB_PATH) as cx:
             cx.row_factory = sqlite3.Row
 
-            # Check series odds staleness for active (non-decided) series
+            # Determine which teams are in an ACTIVE series (neither side has 4 wins yet).
+            # A team can appear in multiple series (Round 1 decided + Round 2 active);
+            # they're active if ANY of their series is not yet decided.
             standings = cx.execute(
                 "SELECT home_team_id, away_team_id, home_wins, away_wins FROM series_standings"
             ).fetchall()
-            decided_ids = set()
-            active_teams = []  # list of (team_id,) for non-decided
+            active_ids: set[int] = set()
             for s in standings:
-                if s["home_wins"] >= 4 or s["away_wins"] >= 4:
-                    decided_ids.add(s["home_team_id"])
-                    decided_ids.add(s["away_team_id"])
-                else:
-                    active_teams.append(s["home_team_id"])
-                    active_teams.append(s["away_team_id"])
+                if s["home_wins"] < 4 and s["away_wins"] < 4:
+                    active_ids.add(s["home_team_id"])
+                    active_ids.add(s["away_team_id"])
 
-            if active_teams:
+            # Series odds: flag stale (>6h) or missing for active teams only.
+            # Fetch interval is 4h, so >6h means at least one cron cycle was missed.
+            if active_ids:
                 team_abbr_map = {t["id"]: t["abbreviation"] for t in nba_teams.get_teams()}
-                odds_rows = cx.execute(
-                    "SELECT team_abbr, fetched_at FROM series_odds"
-                ).fetchall()
+                odds_rows = cx.execute("SELECT team_abbr, fetched_at FROM series_odds").fetchall()
                 odds_by_abbr = {r["team_abbr"]: r["fetched_at"] for r in odds_rows}
 
-                stale_thresh = 12 * 3600  # 12 hours
-                missing_abbrs = []
-                stale_abbrs = []
-                for tid in active_teams:
+                missing_abbrs, stale_abbrs = [], []
+                for tid in active_ids:
                     abbr = team_abbr_map.get(tid, str(tid))
                     if abbr not in odds_by_abbr:
                         missing_abbrs.append(abbr)
                     else:
-                        age = (now - datetime.fromisoformat(
-                            odds_by_abbr[abbr].replace("Z", "+00:00")
-                        )).total_seconds()
-                        if age > stale_thresh:
-                            stale_abbrs.append(f"{abbr} ({int(age/3600)}h)")
+                        age_h = (now - _parse_dt_utc(odds_by_abbr[abbr])).total_seconds() / 3600
+                        if age_h > 6:
+                            stale_abbrs.append(f"{abbr} ({int(age_h)}h)")
                 if missing_abbrs:
-                    issues.append(f"Series odds MISSING for: {', '.join(missing_abbrs)}")
+                    issues.append(f"Series odds MISSING for active teams: {', '.join(missing_abbrs)}")
                 if stale_abbrs:
-                    issues.append(f"Series odds STALE (>12h) for: {', '.join(stale_abbrs)}")
+                    issues.append(f"Series odds STALE (>6h) for active teams: {', '.join(stale_abbrs)}")
 
-            # Check FD projections for today
-            fd_count = cx.execute(
-                "SELECT COUNT(*) FROM fd_projections WHERE date=?", (today,)
-            ).fetchone()[0]
-            if fd_count == 0:
-                issues.append(f"FanDuel projections missing for {today}")
+            # FD/DE projections and injuries: only matter on days with games scheduled.
+            has_games_today = bool(
+                cx.execute("SELECT 1 FROM schedule WHERE game_date=? LIMIT 1", (today,)).fetchone()
+            )
+            if has_games_today:
+                fd_count = cx.execute(
+                    "SELECT COUNT(*) FROM fd_projections WHERE date=?", (today,)
+                ).fetchone()[0]
+                if fd_count == 0:
+                    issues.append(f"FanDuel projections missing for {today}")
 
-            # Check DE projections for today
-            de_count = cx.execute(
-                "SELECT COUNT(*) FROM de_projections WHERE date=?", (today,)
-            ).fetchone()[0]
-            if de_count == 0:
-                issues.append(f"DraftEdge projections missing for {today}")
+                de_count = cx.execute(
+                    "SELECT COUNT(*) FROM de_projections WHERE date=?", (today,)
+                ).fetchone()[0]
+                if de_count == 0:
+                    issues.append(f"DraftEdge projections missing for {today}")
 
-            # Check injuries staleness (>12h)
-            inj_row = cx.execute(
-                "SELECT MAX(fetched_at) FROM injuries"
-            ).fetchone()
-            if inj_row and inj_row[0]:
-                inj_age = (now - datetime.fromisoformat(
-                    inj_row[0].replace("Z", "+00:00")
-                )).total_seconds()
-                if inj_age > 12 * 3600:
-                    issues.append(f"Injury data stale ({int(inj_age/3600)}h old)")
-            else:
-                issues.append("Injury data missing")
+                inj_row = cx.execute("SELECT MAX(fetched_at) FROM injuries").fetchone()
+                if inj_row and inj_row[0]:
+                    inj_age_h = (now - _parse_dt_utc(inj_row[0])).total_seconds() / 3600
+                    if inj_age_h > 2:
+                        issues.append(f"Injury data stale ({int(inj_age_h)}h, expected <2h)")
+                else:
+                    issues.append("Injury data missing")
 
     except Exception as e:
-        issues.append(f"DB check error: {e}")
+        issues.append(f"Data check error: {e}")
 
     return issues
 

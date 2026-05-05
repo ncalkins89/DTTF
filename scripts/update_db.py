@@ -42,18 +42,28 @@ def _step(n: int, label: str) -> None:
 
 
 def _get_live_games(game_date: str) -> list[dict]:
-    """Fetch games for a date from NBA API, filter phantom games using current standings."""
+    """Fetch games for a date from NBA API, filter phantom games using current standings.
+
+    Phantom filter: a team is 'decided' (eliminated or series won) only if ALL their
+    standings entries have a winner (>=4 wins) AND they have no ongoing series (<4 wins).
+    A team that won Round 1 but is in an active Round 2 series is NOT decided.
+    """
     from src.data_fetcher import CURRENT_SEASON, get_todays_games
     from src.db import get_series_standings as db_standings
     games = get_todays_games(game_date)
     if not games:
         return []
     standings = db_standings(CURRENT_SEASON) or []
-    decided = set()
+    has_4_wins: set[int] = set()
+    active: set[int] = set()
     for s in standings:
         if s["home_wins"] >= 4 or s["away_wins"] >= 4:
-            decided.add(s["home_team_id"])
-            decided.add(s["away_team_id"])
+            has_4_wins.add(s["home_team_id"])
+            has_4_wins.add(s["away_team_id"])
+        else:
+            active.add(s["home_team_id"])
+            active.add(s["away_team_id"])
+    decided = has_4_wins - active
     return [g for g in games
             if g["home_team_id"] not in decided
             and g["away_team_id"] not in decided]
@@ -61,7 +71,11 @@ def _get_live_games(game_date: str) -> list[dict]:
 
 def update_schedule(game_date: str) -> list[dict]:
     _step(1, f"Schedule — {game_date}")
-    live_games = _get_live_games(game_date)
+    try:
+        live_games = _get_live_games(game_date)
+    except Exception as e:
+        print(f"  [ERROR] NBA API failed for {game_date}: {e} — skipping schedule update")
+        return []
     if not live_games:
         print("  No games found for this date (or all phantom).")
         return []
@@ -128,7 +142,11 @@ def update_series_odds() -> None:
             row = cx.execute("SELECT MIN(fetched_at) FROM series_odds").fetchone()
         last = row[0] if row and row[0] else None
         if last:
-            age = datetime.utcnow() - datetime.fromisoformat(last)
+            from datetime import timezone as _tz
+            dt = datetime.fromisoformat(last)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=_tz.utc)
+            age = datetime.now(_tz.utc) - dt
             if age < timedelta(hours=4):
                 print(f"  Skipping — last fetched {int(age.total_seconds() / 60)}m ago (TTL 4h)")
                 return
