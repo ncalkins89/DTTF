@@ -423,7 +423,10 @@ def main() -> None:
     if args.skip_series_odds:
         print("\n[4] Series odds — skipped (--skip-series-odds)")
     else:
-        update_series_odds()
+        try:
+            update_series_odds()
+        except Exception as e:
+            print(f"\n[4] Series odds FAILED (cron continues): {e}")
     update_fd_projections(args.date)
     update_injuries()
     update_de_projections(args.date)
