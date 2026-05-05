@@ -7,7 +7,7 @@ from nba_api.stats.endpoints import (
     CommonTeamRoster,
     LeagueDashTeamStats,
     PlayerGameLog,
-    ScoreboardV2,
+    ScoreboardV3,
 )
 from nba_api.stats.static import teams as nba_teams
 
@@ -21,27 +21,19 @@ def get_todays_games(game_date: str | None = None) -> list[dict]:
         game_date = date.today().strftime("%Y-%m-%d")
 
     def fetch():
-        sb = ScoreboardV2(game_date=game_date)
-        header = sb.game_header.get_data_frame()
-        if header.empty:
-            return []
-        team_map = {t["id"]: t["abbreviation"] for t in nba_teams.get_teams()}
-        seen_ids = set()
-        games = []
-        for _, row in header.iterrows():
-            gid = row["GAME_ID"]
-            if gid in seen_ids:
-                continue
-            seen_ids.add(gid)
-            games.append({
-                "game_id": gid,
-                "home_team_id": int(row["HOME_TEAM_ID"]),
-                "away_team_id": int(row["VISITOR_TEAM_ID"]),
-                "home_team_abbr": team_map.get(int(row["HOME_TEAM_ID"]), ""),
-                "away_team_abbr": team_map.get(int(row["VISITOR_TEAM_ID"]), ""),
+        sb = ScoreboardV3(game_date=game_date, league_id="00")
+        raw_games = sb.get_dict().get("scoreboard", {}).get("games", [])
+        return [
+            {
+                "game_id": g["gameId"],
+                "home_team_id": g["homeTeam"]["teamId"],
+                "away_team_id": g["awayTeam"]["teamId"],
+                "home_team_abbr": g["homeTeam"]["teamTricode"],
+                "away_team_abbr": g["awayTeam"]["teamTricode"],
                 "game_date": game_date,
-            })
-        return games
+            }
+            for g in raw_games
+        ]
 
     time.sleep(REQUEST_DELAY)
     return fetch()
