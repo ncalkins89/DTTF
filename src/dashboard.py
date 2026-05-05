@@ -179,7 +179,7 @@ def build_todays_player_df(game_date: str | None = None, current_round: int = 1)
         print(f"[dashboard] WARNING: no per-game odds in DB for {game_date} — odds will be null", flush=True)
     per_game_probs = db_odds or {}
     from src.db import get_series_odds as _db_series
-    series_win_probs = {abbr: v["series_win_prob"] for abbr, v in _db_series().items()}
+    series_win_probs = {k: v["series_win_prob"] for k, v in _db_series().items()}
     used_ids = get_used_player_ids()
     ext_projs = load_external_projections()
 
@@ -219,9 +219,9 @@ def build_todays_player_df(game_date: str | None = None, current_round: int = 1)
         per_game_p = per_game_probs.get(team_abbr)
         if per_game_p is None:
             print(f"[dashboard] WARNING: no per-game odds for {team_abbr}", flush=True)
-        series_win_prob = series_win_probs.get(team_abbr)
+        series_win_prob = series_win_probs.get((team_abbr, opp_abbr))
         if series_win_prob is None:
-            print(f"[dashboard] WARNING: no series win prob for {team_abbr}", flush=True)
+            print(f"[dashboard] WARNING: no series win prob for {team_abbr} vs {opp_abbr}", flush=True)
 
         for player in roster:
             pid = player["player_id"]
@@ -2353,7 +2353,7 @@ def update_model_charts(player_id, decay_rate, tab):
     from src.data_fetcher import CURRENT_SEASON as _CS2
     series_standings = db_get_series_standings(_CS2) or []
     from src.db import get_series_odds as _db_series2
-    series_win_probs = {abbr: v["series_win_prob"] for abbr, v in _db_series2().items()}
+    _series_odds_by_pair = _db_series2()  # keyed by (team_abbr, opponent_abbr)
 
     # Find which game this player is in
     player_team_id = None

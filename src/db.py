@@ -147,12 +147,13 @@ def init_db() -> None:
         );
 
         CREATE TABLE IF NOT EXISTS series_odds (
-            team_abbr        TEXT PRIMARY KEY,
+            team_abbr        TEXT NOT NULL,
+            opponent_abbr    TEXT NOT NULL,
             series_win_prob  REAL NOT NULL,
             american_odds    INTEGER,
-            opponent_abbr    TEXT,
             odds_source      TEXT,
-            fetched_at       TEXT NOT NULL
+            fetched_at       TEXT NOT NULL,
+            PRIMARY KEY (team_abbr, opponent_abbr)
         );
 
         CREATE TABLE IF NOT EXISTS dk_odds_audit (
@@ -197,11 +198,25 @@ def init_db() -> None:
         except Exception:
             pass  # column already exists
 
-        # Migration: add odds_source column to series_odds
-        try:
-            cx.execute("ALTER TABLE series_odds ADD COLUMN odds_source TEXT")
-        except Exception:
-            pass  # column already exists
+        # Migration: rebuild series_odds with composite PK (team_abbr, opponent_abbr)
+        # Old schema had team_abbr as sole PK, causing stale Round 1 odds to show in Round 2.
+        cols = {row[1] for row in cx.execute("PRAGMA table_info(series_odds)").fetchall()}
+        old_pk_only = "opponent_abbr" not in cols or cx.execute(
+            "SELECT COUNT(*) FROM pragma_table_info('series_odds') WHERE pk > 0"
+        ).fetchone()[0] == 1
+        if old_pk_only:
+            cx.execute("DROP TABLE IF EXISTS series_odds")
+            cx.execute("""
+                CREATE TABLE series_odds (
+                    team_abbr        TEXT NOT NULL,
+                    opponent_abbr    TEXT NOT NULL,
+                    series_win_prob  REAL NOT NULL,
+                    american_odds    INTEGER,
+                    odds_source      TEXT,
+                    fetched_at       TEXT NOT NULL,
+                    PRIMARY KEY (team_abbr, opponent_abbr)
+                )
+            """)
 
 
 @contextmanager
@@ -685,12 +700,13 @@ def upsert_series_odds(data: dict) -> None:
     with _conn() as cx:
         cx.executemany(
             """INSERT OR REPLACE INTO series_odds
-               (team_abbr, series_win_prob, american_odds, opponent_abbr, odds_source, fetched_at)
+               (team_abbr, opponent_abbr, series_win_prob, american_odds, odds_source, fetched_at)
                VALUES (?, ?, ?, ?, ?, ?)""",
             [
-                (abbr, v["series_win_prob"], v.get("american_odds"),
-                 v.get("opponent_abbr"), v.get("odds_source"), now)
+                (abbr, v["opponent_abbr"], v["series_win_prob"],
+                 v.get("american_odds"), v.get("odds_source"), now)
                 for abbr, v in data.items()
+                if v.get("opponent_abbr")
             ],
         )
 
@@ -717,12 +733,12 @@ def log_dk_odds_audit(records: list[dict]) -> None:
 
 
 def get_series_odds() -> dict:
-    """Returns {team_abbr: {"series_win_prob": float, "american_odds": int, "opponent_abbr": str}}"""
+    """Returns {(team_abbr, opponent_abbr): {"series_win_prob": float, "american_odds": int, "opponent_abbr": str}}"""
     with _conn() as cx:
         rows = cx.execute(
-            "SELECT team_abbr, series_win_prob, american_odds, opponent_abbr FROM series_odds"
+            "SELECT team_abbr, opponent_abbr, series_win_prob, american_odds, odds_source, fetched_at FROM series_odds"
         ).fetchall()
-    return {r["team_abbr"]: dict(r) for r in rows}
+    return {(r["team_abbr"], r["opponent_abbr"]): dict(r) for r in rows}
 
 
 def log_scraping_error(source: str, error_msg: str) -> None:
