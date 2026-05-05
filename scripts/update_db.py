@@ -14,6 +14,7 @@ import argparse
 import sys
 from datetime import date, datetime, timedelta
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -424,8 +425,9 @@ def update_model_projections_snapshot(game_date: str, games: list[dict], season:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Bring dttf.db up to date.")
-    parser.add_argument("--date", default=date.today().isoformat(),
-                        help="Game date to load (YYYY-MM-DD, default: today)")
+    _PT = ZoneInfo("America/Los_Angeles")
+    parser.add_argument("--date", default=datetime.now(_PT).date().isoformat(),
+                        help="Game date to load (YYYY-MM-DD, default: today in PT)")
     parser.add_argument("--skip-logs", action="store_true",
                         help="Skip per-player game log fetch (faster, ~10s vs ~5min)")
     parser.add_argument("--skip-series-odds", action="store_true",
