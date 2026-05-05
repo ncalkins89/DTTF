@@ -237,11 +237,19 @@ def get_series_record_for_team(
     series_standings: list[dict],
     team_id_to_abbr: dict[int, str],
 ) -> dict:
+    # A team can appear in multiple series (e.g. Round 1 decided + Round 2 active).
+    # Prefer the active series (neither side has ≥4 wins) over a decided one.
+    fallback = None
     for series in series_standings:
         home_abbr = team_id_to_abbr.get(series["home_team_id"], "")
         away_abbr = team_id_to_abbr.get(series["away_team_id"], "")
         if home_abbr == team_abbr:
-            return {"wins": series["home_wins"], "losses": series["away_wins"]}
-        if away_abbr == team_abbr:
-            return {"wins": series["away_wins"], "losses": series["home_wins"]}
-    return {"wins": 0, "losses": 0}
+            rec = {"wins": series["home_wins"], "losses": series["away_wins"]}
+        elif away_abbr == team_abbr:
+            rec = {"wins": series["away_wins"], "losses": series["home_wins"]}
+        else:
+            continue
+        if series["home_wins"] < 4 and series["away_wins"] < 4:
+            return rec  # active series — return immediately
+        fallback = rec
+    return fallback or {"wins": 0, "losses": 0}
