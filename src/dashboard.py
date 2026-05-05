@@ -703,7 +703,6 @@ app.layout = dbc.Container(
     children=[
         dcc.Store(id="player-df-store"),
         dcc.Store(id="selected-player-id"),
-        dcc.Store(id="load-db-trigger"),
         dcc.Store(id="today-data-store"),
         dcc.Store(id="picks-store"),  # fires after a pick is written to DB
         # Sentinel: updated by the slow data-fetch callback so all dcc.Loading
@@ -1013,50 +1012,18 @@ app.clientside_callback(
 @app.callback(
     Output("db-status-banner", "children"),
     Input("startup-check", "n_intervals"),
-    Input("today-data-store", "data"),
     prevent_initial_call=False,
 )
-def check_db_status(_, store_data):
+def check_db_status(_):
     today = today_pt().isoformat()
     if db_get_schedule(today):
         return []
-    loading = store_data is None
     return dbc.Alert(
-        [
-            html.Strong("No data for today. "),
-            "Run a data refresh to load today's schedule and projections. ",
-            html.Span([
-                dbc.Spinner(size="sm", color="warning", className="ms-2"),
-                html.Span(" Loading…", className="ms-1 small text-muted"),
-            ]) if loading else dbc.Button("Load Now", id="load-db-btn", color="warning",
-                                          size="sm", className="ms-2"),
-            dbc.Spinner(html.Span(id="load-db-status", className="ms-2 small"), size="sm"),
-        ],
-        id="db-alert",
-        color="warning",
+        "No games scheduled for today — check back later or select a date with games.",
+        color="secondary",
         dismissable=True,
         className="mb-2",
     )
-
-
-@app.callback(
-    Output("load-db-status", "children"),
-    Output("db-alert", "color"),
-    Output("load-db-trigger", "data"),
-    Input("load-db-btn", "n_clicks"),
-    State("game-date-picker", "date"),
-    prevent_initial_call=True,
-)
-def run_load_db(_, selected_date):
-    import subprocess, threading
-    load_date = selected_date or today_pt().isoformat()
-    def _run():
-        subprocess.run(
-            [sys.executable, "scripts/update_db.py", "--date", load_date],
-            cwd=str(Path(__file__).parent.parent),
-        )
-    threading.Thread(target=_run, daemon=True).start()
-    return "Loading in background…", "info", load_date
 
 
 def _get_data_issues() -> list[str]:
@@ -1354,12 +1321,11 @@ def _render_table_from_store(store_data, urgency_field, hide_used=False):
     Input("main-tabs", "active_tab"),
     Input("clear-cache-btn", "n_clicks"),
     Input("game-date-picker", "date"),
-    Input("load-db-trigger", "data"),
     State("urgency-model-select", "value"),
     State("hide-used-toggle", "value"),
     prevent_initial_call=False,
 )
-def load_and_render_today(tab, _, game_date, _load_trigger, urgency_field, hide_used):
+def load_and_render_today(tab, _, game_date, urgency_field, hide_used):
     if tab != "tab-today" and tab is not None:
         return dash.no_update, None, dash.no_update
     try:
